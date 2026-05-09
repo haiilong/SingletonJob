@@ -2,20 +2,18 @@ name: Release
 
 on:
   push:
-    tags: ['v*']
+    tags: ["v*"]
 
 jobs:
   pack-and-push:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      # Required for NuGet trusted publishing (OIDC). Once you switch from API key to trusted publishing,
-      # this token is exchanged for a short-lived NuGet credential — no PAT in repo secrets.
-      id-token: write
+      id-token: write # required for OIDC
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # for SourceLink
+          fetch-depth: 0
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -28,31 +26,21 @@ jobs:
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
       - run: dotnet restore SingletonJob/SingletonJob.csproj
+      - run: dotnet build  SingletonJob/SingletonJob.csproj -c Release --no-restore /p:Version=${{ steps.version.outputs.version }}
+      - run: dotnet pack   SingletonJob/SingletonJob.csproj -c Release --no-build -o artifacts /p:Version=${{ steps.version.outputs.version }}
 
-      - run: dotnet build SingletonJob/SingletonJob.csproj -c Release --no-restore /p:Version=${{ steps.version.outputs.version }}
+      - name: Login to NuGet (OIDC)
+        id: nuget-login
+        uses: NuGet/login@v1
+        with:
+          user: haiilong
 
-      - run: dotnet pack SingletonJob/SingletonJob.csproj -c Release --no-build -o artifacts /p:Version=${{ steps.version.outputs.version }}
-
-      # ---------------------------------------------------------------------
-      # Choose ONE of the two publish blocks below.
-      #
-      # 1) Classic API key (default until you set up trusted publishing):
-      - name: Push to NuGet (API key)
-        run: dotnet nuget push "artifacts/*.nupkg" --api-key "${{ secrets.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
-
-      # 2) NuGet trusted publishing via OIDC (recommended once configured at
-      #    https://www.nuget.org/account/trustedpublishers).
-      #    Replace the API-key step above with this one — the workflow already
-      #    requests `id-token: write` permission.
-      #
-      # - name: Login to NuGet via OIDC
-      #   uses: NuGet/login@v1
-      #   id: nuget-login
-      #   with:
-      #     user: <your-nuget-username>
-      # - name: Push to NuGet (OIDC)
-      #   run: dotnet nuget push "artifacts/*.nupkg" --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
-      # ---------------------------------------------------------------------
+      - name: Push to NuGet
+        run: >
+          dotnet nuget push "artifacts/*.nupkg"
+          --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}"
+          --source https://api.nuget.org/v3/index.json
+          --skip-duplicate
 
       - uses: actions/upload-artifact@v4
         with:
