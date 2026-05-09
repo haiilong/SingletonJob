@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <UserSecretsId>singletonjob-sample</UserSecretsId>
+    <IsPackable>false</IsPackable>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
+    <PackageReference Include="StackExchange.Redis" Version="2.8.16" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\SingletonJob\SingletonJob.csproj" />
+    <!--
+      Source generator is bundled inside the SingletonJob NuGet package as an analyzer, but analyzers do
+      not automatically flow via ProjectReference, so reference it explicitly here. Real NuGet consumers
+      receive it transparently via the package's analyzers/dotnet/cs folder.
+    -->
+    <ProjectReference Include="..\..\SingletonJob.SourceGenerator\SingletonJob.SourceGenerator.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>

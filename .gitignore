@@ -1,0 +1,39 @@
+# .NET
+bin/
+obj/
+out/
+publish/
+*.user
+*.suo
+*.userprefs
+
+# IDE
+.vs/
+.idea/
+*.DotSettings.user
+
+# Build / packages
+artifacts/
+*.nupkg
+*.snupkg
+
+# Misc
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# Tests
+TestResults/
+coverage.*
+*.trx
+
+# AI tooling
+.trae/
+.claude/
+.codex/
+.cursor/
+.aider*
+.windsurf/
+.continue/
+CLAUDE.local.md

@@ -1,0 +1,18 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  worker:
+    build:
+      context: ..
+      dockerfile: samples/SingletonJob.Sample/Dockerfile
+    environment:
+      - ConnectionStrings__Redis=redis:6379
+      - SingletonJob__ProjectName=demo
+      - DOTNET_ENVIRONMENT=Production
+    depends_on:
+      - redis
+    deploy:
+      replicas: 3

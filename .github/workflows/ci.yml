@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - run: dotnet --info
+
+      - run: dotnet restore SingletonJob.slnx
+
+      - run: dotnet build SingletonJob.slnx -c Release --no-restore
+
+      - run: dotnet test SingletonJob.slnx -c Release --no-build --logger "trx;LogFileName=test-results.trx"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: '**/TestResults/*.trx'

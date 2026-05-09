@@ -1,0 +1,84 @@
+using System.Diagnostics;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using StackExchange.Redis;
+
+namespace SingletonJob;
+
+/// <summary>
+/// Runs at a fixed rate using <see cref="PeriodicTimer"/>. If the previous run is still in flight when a tick
+/// arrives the tick is dropped (no overlapping execution, no queueing). Use this when "fire every N ms but
+/// never overlap" semantics are wanted, for example a price-tick poller or a health-check writer.
+/// </summary>
+public abstract class SingletonFixedRateJob : SingletonBackgroundJob
+{
+    private volatile bool _isJobRunning;
+    private Task? _currentRun;
+
+    /// <summary>Implement to return the period between ticks.</summary>
+    protected abstract TimeSpan GetJobInterval();
+
+    /// <inheritdoc />
+    protected SingletonFixedRateJob(
+        IConnectionMultiplexer redis,
+        IOptionsFactory<SingletonJobOptions> options,
+        ILogger logger)
+        : base(redis, options, logger)
+    {
+    }
+
+    /// <inheritdoc />
+    protected override async Task ExecuteJobLoopAsync(CancellationToken stoppingToken)
+    {
+        using var timer = new PeriodicTimer(GetJobInterval());
+
+        try
+        {
+            while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
+            {
+                if (IsLeader && !_isJobRunning)
+                {
+                    _isJobRunning = true;
+                    _currentRun = ExecuteAndResetFlagAsync(stoppingToken);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // shutdown, fall through to await any in-flight run
+        }
+        finally
+        {
+            // Wait for the most recent fire-and-forget run to finish so shutdown is graceful.
+            if (_currentRun is { } run)
+            {
+                try { await run.ConfigureAwait(false); } catch { /* logged inside */ }
+            }
+        }
+    }
+
+    private async Task ExecuteAndResetFlagAsync(CancellationToken cancellationToken)
+    {
+        Logger.LogDebug("Job {JobName} iteration starting", JobName);
+        var startTs = Stopwatch.GetTimestamp();
+        try
+        {
+            await ExecuteJobAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // graceful
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Job {JobName} failed during fixed-rate execution.", JobName);
+        }
+        finally
+        {
+            var elapsed = Stopwatch.GetElapsedTime(startTs);
+            Logger.LogDebug("Job {JobName} iteration completed in {ElapsedMs}ms", JobName, elapsed.TotalMilliseconds);
+            WarnIfExecutionTimeTooLong(elapsed);
+            _isJobRunning = false;
+        }
+    }
+}

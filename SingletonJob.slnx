@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/samples/">
+    <Project Path="samples/SingletonJob.Sample/SingletonJob.Sample.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SingletonJob.Tests/SingletonJob.Tests.csproj" />
+  </Folder>
+  <Project Path="SingletonJob.SourceGenerator/SingletonJob.SourceGenerator.csproj" />
+  <Project Path="SingletonJob/SingletonJob.csproj" />
+</Solution>

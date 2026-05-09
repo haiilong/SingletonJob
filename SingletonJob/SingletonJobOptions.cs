@@ -1,0 +1,58 @@
+namespace SingletonJob;
+
+/// <summary>
+/// Configuration for <see cref="SingletonBackgroundJob"/>-derived jobs.
+/// Bind from configuration via <c>services.AddSingletonJobs(config)</c>, or override per-job with
+/// <c>services.PostConfigureSingletonJob("job-name", o =&gt; ...)</c>.
+/// </summary>
+public class SingletonJobOptions
+{
+    /// <summary>Default appsettings section name: <c>"SingletonJob"</c>.</summary>
+    public const string SectionName = "SingletonJob";
+
+    /// <summary>
+    /// Prefix for Redis lock keys. Use a unique value per deployment so multiple projects sharing a Redis instance
+    /// do not collide. Final key format: <c>{ProjectName}:{JobName}:lock</c>.
+    /// </summary>
+    public string ProjectName { get; set; } = "default";
+
+    /// <summary>
+    /// How often the leader election loop checks/renews the Redis lock. Default 3 seconds.
+    /// Must be strictly less than <see cref="LockExpiry"/> (recommend at least 3x smaller).
+    /// </summary>
+    public TimeSpan HeartbeatInterval { get; set; } = TimeSpan.FromSeconds(3);
+
+    /// <summary>
+    /// TTL applied to the Redis lock key. If the leader fails to renew within this window the lock expires
+    /// and another instance can acquire it. Default 10 seconds.
+    /// </summary>
+    public TimeSpan LockExpiry { get; set; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// Optional override for the node identifier used inside lock values and log lines.
+    /// When null, the library resolves it as: <c>POD_NAME</c> environment variable if set, else
+    /// <see cref="Environment.MachineName"/>; an 8-char random suffix is always appended so multiple
+    /// processes on the same host stay distinguishable.
+    /// </summary>
+    public string? NodeId { get; set; }
+
+    /// <summary>
+    /// On consecutive Redis errors the heartbeat backoff doubles each time, capped at this multiplier
+    /// of <see cref="HeartbeatInterval"/>. Each delay also has ±20% jitter applied to avoid
+    /// thundering-herd reconnects when Redis recovers. Default 8.
+    /// </summary>
+    public int MaxBackoffMultiplier { get; set; } = 8;
+
+    internal void Validate()
+    {
+        if (string.IsNullOrWhiteSpace(ProjectName))
+            throw new InvalidOperationException($"{nameof(SingletonJobOptions)}.{nameof(ProjectName)} must not be empty.");
+        if (HeartbeatInterval <= TimeSpan.Zero)
+            throw new InvalidOperationException($"{nameof(SingletonJobOptions)}.{nameof(HeartbeatInterval)} must be positive.");
+        if (LockExpiry <= HeartbeatInterval)
+            throw new InvalidOperationException(
+                $"{nameof(SingletonJobOptions)}.{nameof(LockExpiry)} ({LockExpiry}) must be greater than {nameof(HeartbeatInterval)} ({HeartbeatInterval}). Recommend LockExpiry >= 3x HeartbeatInterval.");
+        if (MaxBackoffMultiplier < 1)
+            throw new InvalidOperationException($"{nameof(SingletonJobOptions)}.{nameof(MaxBackoffMultiplier)} must be >= 1.");
+    }
+}
