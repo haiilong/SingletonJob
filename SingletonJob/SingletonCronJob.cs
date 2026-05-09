@@ -37,17 +37,31 @@ public abstract class SingletonCronJob : SingletonBackgroundJob
     {
         var expr = GetCronExpression();
 
+        // Track the pivot for the next-occurrence lookup so the loop strictly advances even if Cronos
+        // returns a value at or before the pivot for second-precision expressions like "* * * * * *".
+        // The pivot starts in the past so the first lookup returns the very next occurrence.
+        var pivot = DateTimeOffset.UtcNow.AddTicks(-1);
+
         while (!stoppingToken.IsCancellationRequested)
         {
-            var now = DateTimeOffset.UtcNow;
-            var next = expr.GetNextOccurrence(now, TimeZone);
+            var next = expr.GetNextOccurrence(pivot, TimeZone, inclusive: false);
             if (next is null)
             {
                 Logger.LogWarning("Cron job {JobName} has no future occurrences. Stopping loop.", JobName);
                 return;
             }
 
-            var delay = next.Value - now;
+            // Defensive guard: Cronos should always return a value strictly greater than `pivot` when
+            // inclusive=false, but guard against any edge case to avoid a busy loop.
+            if (next.Value <= pivot)
+            {
+                pivot = pivot.AddTicks(1);
+                continue;
+            }
+
+            pivot = next.Value;
+
+            var delay = next.Value - DateTimeOffset.UtcNow;
             if (delay > TimeSpan.Zero)
             {
                 try
