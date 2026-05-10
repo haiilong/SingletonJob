@@ -57,6 +57,8 @@ await builder.Build().RunAsync();
 ```
 
 > `AddSingletonJobs` is emitted at compile time by the bundled Roslyn source generator. There is no reflection in the registration path, so the library is fully trimming- and NativeAOT-safe.
+>
+> **First build required.** Until the generator runs at least once, your IDE will red-squiggle the call with `CS1061: 'IServiceCollection' does not contain a definition for 'AddSingletonJobs'`. Run `dotnet build` once and the symbol resolves. See [docs/troubleshooting.md](docs/troubleshooting.md) if it still doesn't.
 
 `appsettings.json`:
 

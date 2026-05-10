@@ -28,6 +28,8 @@ await builder.Build().RunAsync();
 
 `AddSingletonJobs` is emitted at compile time by the bundled source generator. There is no reflection in the registration path, so the library is fully trimming- and NativeAOT-safe.
 
+> **Heads-up: run `dotnet build` once before relying on the symbol.** The source generator only runs as part of a build, so a fresh checkout will show `CS1061: 'IServiceCollection' does not contain a definition for 'AddSingletonJobs'` in the IDE until you build at least once. After the first build, the symbol is recognized and IntelliSense works normally.
+
 ## Three job shapes
 
 ### Interval (run, then wait)

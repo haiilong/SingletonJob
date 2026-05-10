@@ -39,6 +39,12 @@ They're at `Debug`. Raise the level for `SingletonJob`:
 "Logging": { "LogLevel": { "SingletonJob": "Debug" } }
 ```
 
+## "`AddSingletonJobs` is not recognized" / "CS1061 ... no definition for `AddSingletonJobs`"
+
+The source generator only runs as part of a build, so on a fresh checkout the symbol does not exist yet and the IDE will red-squiggle the call. **Run `dotnet build` once.** The symbol resolves and IntelliSense works from then on.
+
+If the error persists after a clean build, jump to the next section.
+
 ## "The source generator did not run on my project"
 
 If you reference SingletonJob via NuGet, the generator should run automatically (it's in the package's `analyzers/dotnet/cs` folder). If you reference via `<ProjectReference>`, analyzers do not flow. See [aot.md](aot.md) for the explicit project reference incantation.
