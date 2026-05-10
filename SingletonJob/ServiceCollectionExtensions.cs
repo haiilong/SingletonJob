@@ -52,7 +52,7 @@ public static class ServiceCollectionExtensions
         var nodeId = section["NodeId"];
         if (!string.IsNullOrEmpty(nodeId)) o.NodeId = nodeId;
 
-        if (int.TryParse(section["MaxBackoffMultiplier"], out var mb)) o.MaxBackoffMultiplier = mb;
+        if (TimeSpan.TryParse(section["MaxBackoffDelay"], out var mbd)) o.MaxBackoffDelay = mbd;
     }
 
     /// <summary>

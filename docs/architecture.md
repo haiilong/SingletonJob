@@ -54,7 +54,7 @@ On a hard kill (SIGKILL, OOM, network partition) release does not run; the lock 
 If `SETNX` or the renewal script throws, the heartbeat loop counts consecutive failures and increases the next delay:
 
 ```
-delay = HeartbeatInterval × min(2^failures, MaxBackoffMultiplier) ± 20% jitter
+delay = min(HeartbeatInterval × 2^failures, MaxBackoffDelay) ± 20% jitter
 ```
 
 The jitter prevents a thundering herd of N replicas reconnecting in lockstep when Redis comes back. Reset to 0 on the first successful call.

@@ -37,11 +37,11 @@ public class SingletonJobOptions
     public string? NodeId { get; set; }
 
     /// <summary>
-    /// On consecutive Redis errors the heartbeat backoff doubles each time, capped at this multiplier
-    /// of <see cref="HeartbeatInterval"/>. Each delay also has ±20% jitter applied to avoid
-    /// thundering-herd reconnects when Redis recovers. Default 8.
+    /// On consecutive Redis errors the heartbeat delay doubles each time (exponential backoff), capped at
+    /// this absolute ceiling. Each delay also has ±20% jitter applied to avoid thundering-herd reconnects
+    /// when Redis recovers. Default 30 seconds.
     /// </summary>
-    public int MaxBackoffMultiplier { get; set; } = 8;
+    public TimeSpan MaxBackoffDelay { get; set; } = TimeSpan.FromSeconds(30);
 
     internal void Validate()
     {
@@ -52,7 +52,8 @@ public class SingletonJobOptions
         if (LockExpiry <= HeartbeatInterval)
             throw new InvalidOperationException(
                 $"{nameof(SingletonJobOptions)}.{nameof(LockExpiry)} ({LockExpiry}) must be greater than {nameof(HeartbeatInterval)} ({HeartbeatInterval}). Recommend LockExpiry >= 3x HeartbeatInterval.");
-        if (MaxBackoffMultiplier < 1)
-            throw new InvalidOperationException($"{nameof(SingletonJobOptions)}.{nameof(MaxBackoffMultiplier)} must be >= 1.");
+        if (MaxBackoffDelay < HeartbeatInterval)
+            throw new InvalidOperationException(
+                $"{nameof(SingletonJobOptions)}.{nameof(MaxBackoffDelay)} ({MaxBackoffDelay}) must be >= {nameof(HeartbeatInterval)} ({HeartbeatInterval}).");
     }
 }

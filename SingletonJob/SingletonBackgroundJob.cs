@@ -152,9 +152,12 @@ public abstract class SingletonBackgroundJob : BackgroundService
     {
         if (consecutiveFailures == 0) return _options.HeartbeatInterval;
 
-        // Exponential backoff capped at MaxBackoffMultiplier × HeartbeatInterval.
-        var multiplier = Math.Min(1 << Math.Min(consecutiveFailures, 30), _options.MaxBackoffMultiplier);
-        var baseDelay = TimeSpan.FromTicks(_options.HeartbeatInterval.Ticks * multiplier);
+        // Exponential backoff: HeartbeatInterval * 2^failures, capped at MaxBackoffDelay.
+        var shift = Math.Min(consecutiveFailures, 30);
+        var scaledTicks = _options.HeartbeatInterval.Ticks * (1L << shift);
+        if (scaledTicks < 0 || scaledTicks > _options.MaxBackoffDelay.Ticks)
+            scaledTicks = _options.MaxBackoffDelay.Ticks;
+        var baseDelay = TimeSpan.FromTicks(scaledTicks);
 
         // ±20% jitter so peers don't reconnect in lockstep.
         var jitterFraction = Random.Shared.NextDouble() * 0.4 - 0.2;

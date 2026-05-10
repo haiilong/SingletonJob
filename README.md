@@ -143,7 +143,7 @@ Per-iteration noise is at Debug on purpose. High-frequency jobs would otherwise 
 | `HeartbeatInterval`    | `00:00:03`  | How often to attempt acquire/renew.                                      |
 | `LockExpiry`           | `00:00:10`  | TTL applied to the Redis lock key.                                       |
 | `NodeId`               | `null`      | Override identifier. Falls back to env `POD_NAME`, then `MachineName`.   |
-| `MaxBackoffMultiplier` | `8`         | Exponential backoff cap on consecutive Redis errors.                     |
+| `MaxBackoffDelay`      | `00:00:30`  | Ceiling on the exponential backoff delay between Redis error retries.    |
 
 Validation runs on `StartAsync`; bad config throws. See [docs/configuration.md](docs/configuration.md) for per-job overrides.
 

@@ -8,7 +8,7 @@
 | `HeartbeatInterval` | `TimeSpan` | `00:00:03` | How often to renew the lock. Must be `< LockExpiry`. |
 | `LockExpiry` | `TimeSpan` | `00:00:10` | Redis TTL on the lock key. Recommend `>= 3 * HeartbeatInterval`. |
 | `NodeId` | `string?` | `null` | Override identifier. When null, falls back to env `POD_NAME` then `Environment.MachineName`. An 8-char random suffix is always appended. |
-| `MaxBackoffMultiplier` | `int` | `8` | Cap on exponential backoff (× `HeartbeatInterval`) when Redis errors occur. |
+| `MaxBackoffDelay` | `TimeSpan` | `00:00:30` | Ceiling on the exponential backoff delay applied between heartbeats when Redis throws. Must be `>= HeartbeatInterval`. |
 
 `appsettings.json`:
 
@@ -19,7 +19,7 @@
     "ProjectName": "myapp",
     "HeartbeatInterval": "00:00:03",
     "LockExpiry": "00:00:10",
-    "MaxBackoffMultiplier": 8
+    "MaxBackoffDelay": "00:00:30"
   }
 }
 ```

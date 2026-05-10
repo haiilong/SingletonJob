@@ -18,7 +18,7 @@ PTTL myapp:heartbeat:lock
 
 ## "Nobody is the leader"
 
-Look for `Leader election error` lines. Most likely Redis is unreachable; the heartbeat loop will keep retrying with exponential backoff up to `MaxBackoffMultiplier × HeartbeatInterval`. Once Redis returns, leadership is reacquired automatically.
+Look for `Leader election error` lines. Most likely Redis is unreachable; the heartbeat loop will keep retrying with exponential backoff capped at `MaxBackoffDelay` (default 30 s). Once Redis returns, leadership is reacquired automatically.
 
 If logs are silent, your log level is filtering them out. `SingletonJob` events are at `Information`. Check your config.
 
