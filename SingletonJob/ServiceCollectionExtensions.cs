@@ -1,69 +1,29 @@
-using System.Diagnostics.CodeAnalysis;
-using System.Reflection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
-using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 
 namespace SingletonJob;
 
 /// <summary>DI registration helpers.</summary>
+/// <remarks>
+/// Registration of jobs themselves is performed by the source-generated <c>AddSingletonJobs</c> extension
+/// method. The helpers in this class configure the options machinery that <c>AddSingletonJobs</c> wires up.
+/// </remarks>
 public static class ServiceCollectionExtensions
 {
-    private const string ReflectionAotMessage =
-        "AddSingletonJobs uses Assembly.GetTypes(); for trimming and NativeAOT use the source-generated AddSingletonJobsGenerated() instead.";
-
     /// <summary>
-    /// Reflection-based registration: scans the given assembly (defaults to the calling assembly) for every
-    /// non-abstract subclass of <see cref="SingletonBackgroundJob"/> and registers each as an
-    /// <see cref="IHostedService"/>. Optionally binds <see cref="SingletonJobOptions"/> from
-    /// <paramref name="configuration"/>.
-    /// </summary>
-    /// <remarks>
-    /// You must register <see cref="StackExchange.Redis.IConnectionMultiplexer"/> separately. The library does
-    /// not own the Redis connection lifetime.
-    ///
-    /// For trimming / NativeAOT use the source-generated <c>AddSingletonJobsGenerated()</c> overload, which
-    /// the bundled Roslyn generator emits at compile time.
-    /// </remarks>
-    [RequiresUnreferencedCode(ReflectionAotMessage)]
-    [RequiresDynamicCode(ReflectionAotMessage)]
-    public static IServiceCollection AddSingletonJobs(
-        this IServiceCollection services,
-        IConfiguration? configuration = null,
-        Assembly? assembly = null)
-    {
-        ConfigureSingletonJobOptionsCore(services, configuration);
-
-        assembly ??= Assembly.GetCallingAssembly();
-
-        var jobTypes = assembly.GetTypes()
-            .Where(t => t is { IsClass: true, IsAbstract: false }
-                        && typeof(SingletonBackgroundJob).IsAssignableFrom(t));
-
-        foreach (var type in jobTypes)
-        {
-            services.TryAddEnumerable(ServiceDescriptor.Singleton(typeof(IHostedService), type));
-        }
-
-        return services;
-    }
-
-    /// <summary>
-    /// Internal helper used by both the reflection registration and the source generator output. Configures
-    /// the default options instance and registers a <see cref="OptionsServiceCollectionExtensions.ConfigureAll"/>
+    /// Configures the default <see cref="SingletonJobOptions"/> instance and registers a
+    /// <see cref="OptionsServiceCollectionExtensions.ConfigureAll{TOptions}(IServiceCollection, Action{TOptions})"/>
     /// pass that applies the same configuration to every named options instance, so per-job overrides only
     /// need to specify the values they want to change.
     /// </summary>
+    /// <remarks>
+    /// Called automatically by the source-generated <c>AddSingletonJobs</c>. You normally do not need to call
+    /// this directly.
+    /// </remarks>
     public static IServiceCollection ConfigureSingletonJobOptions(
         this IServiceCollection services,
         IConfiguration? configuration)
-    {
-        ConfigureSingletonJobOptionsCore(services, configuration);
-        return services;
-    }
-
-    private static void ConfigureSingletonJobOptionsCore(IServiceCollection services, IConfiguration? configuration)
     {
         if (configuration is not null)
         {
@@ -77,6 +37,8 @@ public static class ServiceCollectionExtensions
         {
             services.AddOptions<SingletonJobOptions>();
         }
+
+        return services;
     }
 
     private static void BindFromSection(IConfigurationSection section, SingletonJobOptions o)

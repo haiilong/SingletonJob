@@ -21,12 +21,12 @@ var builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
     ConnectionMultiplexer.Connect(builder.Configuration.GetConnectionString("Redis")!));
 
-builder.Services.AddSingletonJobsGenerated(builder.Configuration);
+builder.Services.AddSingletonJobs(builder.Configuration);
 
 await builder.Build().RunAsync();
 ```
 
-`AddSingletonJobsGenerated` is emitted by the bundled source generator; it is the AOT-safe registration path. The reflection-based `AddSingletonJobs` is also available (and produces an `IL2026`/`IL3050` warning under trimming).
+`AddSingletonJobs` is emitted at compile time by the bundled source generator. There is no reflection in the registration path, so the library is fully trimming- and NativeAOT-safe.
 
 ## Three job shapes
 

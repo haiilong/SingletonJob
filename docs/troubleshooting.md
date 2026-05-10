@@ -39,10 +39,6 @@ They're at `Debug`. Raise the level for `SingletonJob`:
 "Logging": { "LogLevel": { "SingletonJob": "Debug" } }
 ```
 
-## "I see `IL2026` / `IL3050` warnings under `PublishAot`"
-
-You called `AddSingletonJobs` instead of `AddSingletonJobsGenerated`. The reflection version is annotated as not AOT-safe. Switch to the source-generated registration.
-
 ## "The source generator did not run on my project"
 
 If you reference SingletonJob via NuGet, the generator should run automatically (it's in the package's `analyzers/dotnet/cs` folder). If you reference via `<ProjectReference>`, analyzers do not flow. See [aot.md](aot.md) for the explicit project reference incantation.
@@ -53,7 +49,7 @@ To inspect generator output:
 dotnet build -p:EmitCompilerGeneratedFiles=true -p:CompilerGeneratedFilesOutputPath=Generated
 ```
 
-Look in `Generated/SingletonJob.SourceGenerator/.../SingletonJobGeneratedRegistration.g.cs`.
+Look in `Generated/SingletonJob.SourceGenerator/.../SingletonJobGeneratedRegistration.g.cs`. If the file exists but `AddSingletonJobs` is missing or empty, no concrete subclass of `SingletonBackgroundJob` was found in the compilation.
 
 ## "I want to override `LockExpiry` for one job only"
 

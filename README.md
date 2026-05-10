@@ -51,12 +51,12 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
     ConnectionMultiplexer.Connect(builder.Configuration.GetConnectionString("Redis")!));
 
 // Source-generated, AOT-safe: registers every SingletonBackgroundJob subclass at compile time.
-builder.Services.AddSingletonJobsGenerated(builder.Configuration);
+builder.Services.AddSingletonJobs(builder.Configuration);
 
 await builder.Build().RunAsync();
 ```
 
-> The bundled Roslyn source generator emits `AddSingletonJobsGenerated` for your project. A reflection-based `AddSingletonJobs` exists too, but is annotated `[RequiresUnreferencedCode]`/`[RequiresDynamicCode]`. The source-generated path is the recommended one for trimming and NativeAOT.
+> `AddSingletonJobs` is emitted at compile time by the bundled Roslyn source generator. There is no reflection in the registration path, so the library is fully trimming- and NativeAOT-safe.
 
 `appsettings.json`:
 

@@ -7,8 +7,8 @@ namespace SingletonJob.SourceGenerator;
 
 /// <summary>
 /// Incremental source generator that finds every non-abstract class deriving from
-/// <c>SingletonJob.SingletonBackgroundJob</c> in the user's compilation and emits a partial extension
-/// class with an <c>AddSingletonJobsGenerated</c> method that registers each one as an
+/// <c>SingletonJob.SingletonBackgroundJob</c> in the user's compilation and emits an extension
+/// class with an <c>AddSingletonJobs</c> method that registers each one as an
 /// <c>IHostedService</c>. Output is trimming- and NativeAOT-safe: no reflection.
 /// </summary>
 [Generator(LanguageNames.CSharp)]
@@ -71,11 +71,11 @@ public sealed class SingletonJobGenerator : IIncrementalGenerator
         sb.AppendLine("internal static class SingletonJobGeneratedRegistration");
         sb.AppendLine("{");
         sb.AppendLine("    /// <summary>");
-        sb.AppendLine("    /// AOT-safe alternative to <see cref=\"ServiceCollectionExtensions.AddSingletonJobs\"/>.");
         sb.AppendLine("    /// Registers every concrete <see cref=\"SingletonBackgroundJob\"/> subclass discovered by the source generator");
         sb.AppendLine("    /// as an <see cref=\"IHostedService\"/>. Optionally binds <see cref=\"SingletonJobOptions\"/> from configuration.");
+        sb.AppendLine("    /// Trimming- and NativeAOT-safe (no reflection).");
         sb.AppendLine("    /// </summary>");
-        sb.AppendLine("    internal static IServiceCollection AddSingletonJobsGenerated(this IServiceCollection services, IConfiguration? configuration = null)");
+        sb.AppendLine("    internal static IServiceCollection AddSingletonJobs(this IServiceCollection services, IConfiguration? configuration = null)");
         sb.AppendLine("    {");
         sb.AppendLine("        services.ConfigureSingletonJobOptions(configuration);");
         foreach (var fullName in distinct)

@@ -2,8 +2,8 @@ namespace SingletonJob;
 
 /// <summary>
 /// Configuration for <see cref="SingletonBackgroundJob"/>-derived jobs.
-/// Bind from configuration via <c>services.AddSingletonJobs(config)</c>, or override per-job with
-/// <c>services.PostConfigureSingletonJob("job-name", o =&gt; ...)</c>.
+/// Bound from configuration by the source-generated <c>services.AddSingletonJobs(config)</c>,
+/// or override per-job with <c>services.PostConfigureSingletonJob("job-name", o =&gt; ...)</c>.
 /// </summary>
 public class SingletonJobOptions
 {
