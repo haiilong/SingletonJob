@@ -1,6 +1,6 @@
-#!/usr/bin/env pwsh
+#!/usr/bin/env powershell
 # Launches 3 instances of the SingletonJob.Sample worker against a local Redis at localhost:6379.
-# Each instance opens in its own pwsh window so leadership transitions are visible.
+# Each instance opens in its own powershell window so leadership transitions are visible.
 # Stop one window to observe failover within ~3 seconds (HeartbeatInterval).
 
 $ErrorActionPreference = 'Stop'
@@ -12,7 +12,7 @@ if (-not (Test-Path $proj)) {
 }
 
 for ($i = 1; $i -le 3; $i++) {
-    Start-Process pwsh -ArgumentList @(
+    Start-Process powershell -ArgumentList @(
         '-NoExit',
         '-Command',
         "`$Host.UI.RawUI.WindowTitle='SingletonJob worker #$i'; dotnet run --project `"$proj`" -c Release"
