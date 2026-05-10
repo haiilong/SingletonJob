@@ -4,7 +4,7 @@ using StackExchange.Redis;
 
 namespace SingletonJob.Sample;
 
-public sealed class DailyReportJob(
+public sealed partial class DailyReportJob(
     IConnectionMultiplexer redis,
     IOptionsFactory<SingletonJobOptions> options,
     ILogger<DailyReportJob> logger)
@@ -18,7 +18,10 @@ public sealed class DailyReportJob(
 
     protected override Task ExecuteJobAsync(CancellationToken cancellationToken)
     {
-        Logger.LogInformation("[daily-report] generating at {Time:O}", DateTimeOffset.UtcNow);
+        LogDailyReportJob(Logger, DateTimeOffset.UtcNow);
         return Task.CompletedTask;
     }
+
+    [LoggerMessage(LogLevel.Information, "[daily-report] generating at {Time:O}")]
+    static partial void LogDailyReportJob(ILogger logger, DateTimeOffset time);
 }

@@ -3,7 +3,7 @@ using StackExchange.Redis;
 
 namespace SingletonJob.Sample;
 
-public sealed class HeartbeatJob(
+public sealed partial class HeartbeatJob(
     IConnectionMultiplexer redis,
     IOptionsFactory<SingletonJobOptions> options,
     ILogger<HeartbeatJob> logger)
@@ -14,7 +14,10 @@ public sealed class HeartbeatJob(
 
     protected override Task ExecuteJobAsync(CancellationToken cancellationToken)
     {
-        Logger.LogInformation("[heartbeat] tick at {Time:HH:mm:ss.fff}", DateTimeOffset.Now);
+        LogHeartbeatJob(Logger, DateTimeOffset.Now);
         return Task.CompletedTask;
     }
+
+    [LoggerMessage(LogLevel.Information, "[heartbeat] tick at {Time:HH:mm:ss.fff}")]
+    static partial void LogHeartbeatJob(ILogger logger, DateTimeOffset time);
 }
