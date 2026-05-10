@@ -11,14 +11,23 @@ if (-not (Test-Path $proj)) {
     exit 1
 }
 
-# Prefer PowerShell 7+ (pwsh) if installed; fall back to Windows PowerShell 5.1 (powershell), which ships with Windows.
+# Build ONCE before spawning workers. Three parallel `dotnet run` invocations would otherwise race on the
+# Roslyn analyzer DLL (SingletonJob.SourceGenerator.dll) and fail with CS2012 file-in-use.
+Write-Host "Building $proj (Release) ..."
+dotnet build $proj -c Release | Out-Host
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "Build failed."
+    exit 1
+}
+
+# Prefer PowerShell 7+ (pwsh) if installed; fall back to Windows PowerShell 5.1 (powershell).
 $shell = if (Get-Command pwsh -ErrorAction SilentlyContinue) { 'pwsh' } else { 'powershell' }
 
 for ($i = 1; $i -le 3; $i++) {
     Start-Process $shell -ArgumentList @(
         '-NoExit',
         '-Command',
-        "`$Host.UI.RawUI.WindowTitle='SingletonJob worker #$i'; dotnet run --project `"$proj`" -c Release"
+        "`$Host.UI.RawUI.WindowTitle='SingletonJob worker #$i'; dotnet run --project `"$proj`" -c Release --no-build"
     )
     Start-Sleep -Milliseconds 400
 }
