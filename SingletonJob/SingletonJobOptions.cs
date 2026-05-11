@@ -11,10 +11,14 @@ public class SingletonJobOptions
     public const string SectionName = "SingletonJob";
 
     /// <summary>
-    /// Prefix for Redis lock keys. Use a unique value per deployment so multiple projects sharing a Redis instance
-    /// do not collide. Final key format: <c>{ProjectName}:{JobName}:lock</c>.
+    /// Prefix for Redis lock keys. <b>Required.</b> Set a unique value per deployment so multiple projects sharing
+    /// a Redis instance do not collide. Final key format: <c>{ProjectName}:{JobName}:lock</c>.
     /// </summary>
-    public string ProjectName { get; set; } = "default";
+    /// <remarks>
+    /// No default value is supplied on purpose: a shared default would silently let two unrelated deployments collide
+    /// on the same Redis instance. If unset, <see cref="Validate"/> throws at host startup.
+    /// </remarks>
+    public string ProjectName { get; set; } = "";
 
     /// <summary>
     /// How often the leader election loop checks/renews the Redis lock. Default 3 seconds.
@@ -46,7 +50,12 @@ public class SingletonJobOptions
     internal void Validate()
     {
         if (string.IsNullOrWhiteSpace(ProjectName))
-            throw new InvalidOperationException($"{nameof(SingletonJobOptions)}.{nameof(ProjectName)} must not be empty.");
+            throw new InvalidOperationException(
+                $"{nameof(SingletonJobOptions)}.{nameof(ProjectName)} must be set. " +
+                "Configure it via appsettings.json (\"SingletonJob:ProjectName\"), environment variable " +
+                "(\"SingletonJob__ProjectName\"), or programmatically " +
+                "(services.PostConfigure<SingletonJobOptions>(o => o.ProjectName = \"...\")). " +
+                "No default is supplied so unrelated deployments sharing the same Redis instance do not collide on lock keys.");
         if (HeartbeatInterval <= TimeSpan.Zero)
             throw new InvalidOperationException($"{nameof(SingletonJobOptions)}.{nameof(HeartbeatInterval)} must be positive.");
         if (LockExpiry <= HeartbeatInterval)

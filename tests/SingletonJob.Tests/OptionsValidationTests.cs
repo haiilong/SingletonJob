@@ -5,19 +5,39 @@ namespace SingletonJob.Tests;
 public class OptionsValidationTests
 {
     [Fact]
-    public void Defaults_are_valid()
+    public void Defaults_throw_because_project_name_must_be_set()
     {
-        var act = () => new SingletonJobOptions().GetType()
-            .GetMethod("Validate", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
-            .Invoke(new SingletonJobOptions(), null);
-        act.Should().NotThrow();
+        // ProjectName has no default on purpose to avoid silent collisions across deployments that share a Redis instance.
+        Invoking(new SingletonJobOptions())
+            .Should().Throw<InvalidOperationException>()
+            .WithMessage("*ProjectName*must be set*");
     }
 
     [Fact]
-    public void Empty_project_name_throws()
+    public void Setting_only_project_name_is_valid()
     {
-        var opts = new SingletonJobOptions { ProjectName = "" };
+        var opts = new SingletonJobOptions { ProjectName = "myapp" };
+        Invoking(opts).Should().NotThrow();
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("\t")]
+    public void Empty_or_whitespace_project_name_throws(string projectName)
+    {
+        var opts = new SingletonJobOptions { ProjectName = projectName };
         Invoking(opts).Should().Throw<InvalidOperationException>().WithMessage("*ProjectName*");
+    }
+
+    [Fact]
+    public void Project_name_error_includes_actionable_guidance()
+    {
+        var opts = new SingletonJobOptions();
+        Invoking(opts).Should().Throw<InvalidOperationException>()
+            .Where(e =>
+                e.Message.Contains("appsettings.json", StringComparison.Ordinal) &&
+                e.Message.Contains("PostConfigure", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -25,6 +45,7 @@ public class OptionsValidationTests
     {
         var opts = new SingletonJobOptions
         {
+            ProjectName = "myapp",
             HeartbeatInterval = TimeSpan.FromSeconds(10),
             LockExpiry = TimeSpan.FromSeconds(10),
         };
@@ -34,7 +55,7 @@ public class OptionsValidationTests
     [Fact]
     public void Negative_heartbeat_throws()
     {
-        var opts = new SingletonJobOptions { HeartbeatInterval = TimeSpan.Zero };
+        var opts = new SingletonJobOptions { ProjectName = "myapp", HeartbeatInterval = TimeSpan.Zero };
         Invoking(opts).Should().Throw<InvalidOperationException>().WithMessage("*HeartbeatInterval*");
     }
 

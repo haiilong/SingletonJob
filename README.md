@@ -143,7 +143,7 @@ Per-iteration noise is at Debug on purpose. High-frequency jobs would otherwise 
 
 | Option                 | Default     | Description                                                              |
 |------------------------|-------------|--------------------------------------------------------------------------|
-| `ProjectName`          | `default`   | Lock key prefix. Pick a unique value per deployment.                     |
+| `ProjectName`          | _(required)_ | Lock key prefix. Must be set explicitly. The host throws at startup if empty. |
 | `HeartbeatInterval`    | `00:00:03`  | How often to attempt acquire/renew.                                      |
 | `LockExpiry`           | `00:00:10`  | TTL applied to the Redis lock key.                                       |
 | `NodeId`               | `null`      | Override identifier. Falls back to env `POD_NAME`, then `MachineName`.   |

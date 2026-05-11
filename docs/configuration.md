@@ -4,7 +4,7 @@
 
 | Option | Type | Default | Notes |
 |---|---|---|---|
-| `ProjectName` | `string` | `"default"` | Lock-key prefix. Use a unique value per deployment so multiple projects sharing a Redis instance don't collide. |
+| `ProjectName` | `string` | _(required)_ | Lock-key prefix. Must be set explicitly. A shared default would silently let two unrelated deployments collide on the same Redis instance. The host throws `InvalidOperationException` at startup if this is empty. |
 | `HeartbeatInterval` | `TimeSpan` | `00:00:03` | How often to renew the lock. Must be `< LockExpiry`. |
 | `LockExpiry` | `TimeSpan` | `00:00:10` | Redis TTL on the lock key. Recommend `>= 3 * HeartbeatInterval`. |
 | `NodeId` | `string?` | `null` | Override identifier. When null, falls back to env `POD_NAME` then `Environment.MachineName`. An 8-char random suffix is always appended. |
