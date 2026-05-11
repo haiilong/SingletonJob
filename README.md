@@ -137,6 +137,8 @@ LockExpiry         ──▶ TTL on the Redis key       (default 10s)
 
 Per-iteration noise is at Debug on purpose. High-frequency jobs would otherwise flood Information logs.
 
+> **Inside a job, log via the inherited `Logger` field — not the constructor parameter.** The base class already stores the logger in a `protected ILogger Logger`. Forwarding `logger` to `base(...)` *and* referencing it from your primary-constructor body creates a second backing field for the same value, which trips compiler warning [**CS9124**](docs/troubleshooting.md#cs9124-parameter-logger-is-captured-into-the-state-of-the-enclosing-type). Use `Logger.LogInformation(...)` (or a `[LoggerMessage]` static partial that takes `ILogger`, passed `Logger`) instead.
+
 ## Configuration
 
 | Option                 | Default     | Description                                                              |

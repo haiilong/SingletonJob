@@ -57,6 +57,50 @@ dotnet build -p:EmitCompilerGeneratedFiles=true -p:CompilerGeneratedFilesOutputP
 
 Look in `Generated/SingletonJob.SourceGenerator/.../SingletonJobGeneratedRegistration.g.cs`. If the file exists but `AddSingletonJobs` is missing or empty, no concrete subclass of `SingletonBackgroundJob` was found in the compilation.
 
+## "CS9124: parameter 'logger' is captured into the state of the enclosing type"
+
+You're using a primary constructor on your job and referencing the `logger` parameter inside a method body:
+
+```csharp
+public sealed class MyJob(
+    IConnectionMultiplexer redis,
+    IOptionsFactory<SingletonJobOptions> options,
+    ILogger<MyJob> logger)
+    : SingletonIntervalJob(redis, options, logger)
+{
+    protected override Task ExecuteJobAsync(CancellationToken ct)
+    {
+        logger.LogInformation("..."); // CS9124
+        return Task.CompletedTask;
+    }
+}
+```
+
+The base class `SingletonBackgroundJob` already stores the logger in a `protected ILogger Logger` field. Referencing the primary-constructor `logger` after forwarding it to `base(...)` makes the compiler synthesize a *second* backing field on your type for the same value. Switch to the inherited `Logger`:
+
+```csharp
+protected override Task ExecuteJobAsync(CancellationToken ct)
+{
+    Logger.LogInformation("...");
+    return Task.CompletedTask;
+}
+```
+
+Same applies to `[LoggerMessage]` source-generated logging: pass `Logger` to the generated method, not the constructor parameter:
+
+```csharp
+protected override Task ExecuteJobAsync(CancellationToken ct)
+{
+    LogTick(Logger, DateTimeOffset.Now);
+    return Task.CompletedTask;
+}
+
+[LoggerMessage(LogLevel.Information, "tick at {Time:HH:mm:ss.fff}")]
+static partial void LogTick(ILogger logger, DateTimeOffset time);
+```
+
+Treat the `logger` constructor parameter as write-only: forward it to `base(...)` and never touch it again.
+
 ## "I want to override `LockExpiry` for one job only"
 
 ```csharp
