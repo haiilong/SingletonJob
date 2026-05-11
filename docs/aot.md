@@ -23,7 +23,7 @@ using Microsoft.Extensions.Hosting;
 
 namespace SingletonJob;
 
-[System.CodeDom.Compiler.GeneratedCode("SingletonJob.SourceGenerator", "0.1.0")]
+[System.CodeDom.Compiler.GeneratedCode("SingletonJob.SourceGenerator", "1.0.0")]
 internal static class SingletonJobGeneratedRegistration
 {
     internal static IServiceCollection AddSingletonJobs(this IServiceCollection services, IConfiguration? configuration = null)

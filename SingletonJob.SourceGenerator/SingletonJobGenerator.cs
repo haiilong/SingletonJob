@@ -67,7 +67,7 @@ public sealed class SingletonJobGenerator : IIncrementalGenerator
         sb.AppendLine("namespace SingletonJob;");
         sb.AppendLine();
         sb.AppendLine("/// <summary>Source-generated, trimming- and AOT-safe registration for every <see cref=\"SingletonBackgroundJob\"/> subclass in the compilation. Emitted as <c>internal</c> so each consuming assembly gets its own copy.</summary>");
-        sb.AppendLine("[System.CodeDom.Compiler.GeneratedCode(\"SingletonJob.SourceGenerator\", \"0.1.0\")]");
+        sb.AppendLine("[System.CodeDom.Compiler.GeneratedCode(\"SingletonJob.SourceGenerator\", \"1.0.0\")]");
         sb.AppendLine("internal static class SingletonJobGeneratedRegistration");
         sb.AppendLine("{");
         sb.AppendLine("    /// <summary>");

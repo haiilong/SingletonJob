@@ -162,6 +162,7 @@ Validation runs on `StartAsync`; bad config throws. See [docs/configuration.md](
 | [docs/deployment-kubernetes.md](docs/deployment-kubernetes.md) | Pod manifest, SIGTERM, sizing |
 | [docs/deployment-redis.md](docs/deployment-redis.md) | Standalone, Sentinel, Cluster, Memurai |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Common pitfalls and how to debug them |
+| [CHANGELOG.md](CHANGELOG.md) | Release notes per version |
 
 ## Try it locally
 
