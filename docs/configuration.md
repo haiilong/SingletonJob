@@ -24,7 +24,7 @@
 }
 ```
 
-Validation runs on `StartAsync`. Bad config throws `InvalidOperationException` and the host fails to start.
+Validation is wired through `IValidateOptions<SingletonJobOptions>`. A tiny hosted service resolves `IOptions<SingletonJobOptions>.Value` at host start, so bad base config throws `OptionsValidationException` before any job iteration runs. Per-job overrides are validated when each job calls `IOptionsFactory.Create(JobName)` during its `StartAsync`; the error message is prefixed with `[Job: name]` so you can see which override is at fault.
 
 ## Per-job overrides
 

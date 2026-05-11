@@ -1,5 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 
 namespace SingletonJob;
@@ -19,7 +21,10 @@ public static class ServiceCollectionExtensions
     /// </summary>
     /// <remarks>
     /// Called automatically by the source-generated <c>AddSingletonJobs</c>. You normally do not need to call
-    /// this directly.
+    /// this directly. Also registers an <see cref="IValidateOptions{TOptions}"/> validator plus a small
+    /// <see cref="IHostedService"/> that resolves <see cref="IOptions{TOptions}.Value"/> at startup, so
+    /// configuration errors throw <see cref="OptionsValidationException"/> the moment the host starts rather
+    /// than at the first job tick.
     /// </remarks>
     public static IServiceCollection ConfigureSingletonJobOptions(
         this IServiceCollection services,
@@ -37,6 +42,12 @@ public static class ServiceCollectionExtensions
         {
             services.AddOptions<SingletonJobOptions>();
         }
+
+        // IValidateOptions runs whenever IOptionsFactory.Create(name) is invoked. Each job triggers it for its
+        // own named instance during StartAsync; the hosted service below triggers it for the default instance
+        // at host start so misconfiguration fails before any IHostedService is started.
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<SingletonJobOptions>, SingletonJobOptionsValidator>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, SingletonJobOptionsValidationStartup>());
 
         return services;
     }
@@ -70,4 +81,49 @@ public static class ServiceCollectionExtensions
         services.PostConfigure(jobName, configure);
         return services;
     }
+}
+
+/// <summary>
+/// Wraps <see cref="SingletonJobOptions"/>.Validate so it participates in the standard
+/// <see cref="IValidateOptions{TOptions}"/> pipeline. Invoked for every named instance the options factory
+/// creates, so per-job overrides are validated too.
+/// </summary>
+internal sealed class SingletonJobOptionsValidator : IValidateOptions<SingletonJobOptions>
+{
+    public ValidateOptionsResult Validate(string? name, SingletonJobOptions options)
+    {
+        try
+        {
+            options.Validate();
+            return ValidateOptionsResult.Success;
+        }
+        catch (InvalidOperationException ex)
+        {
+            return string.IsNullOrEmpty(name)
+                ? ValidateOptionsResult.Fail(ex.Message)
+                : ValidateOptionsResult.Fail($"[Job: {name}] {ex.Message}");
+        }
+    }
+}
+
+/// <summary>
+/// Tiny hosted service that resolves <see cref="IOptions{TOptions}.Value"/> on
+/// <see cref="IHostedService.StartAsync(CancellationToken)"/>. Touching <c>Value</c> triggers the registered
+/// <see cref="IValidateOptions{TOptions}"/> implementations, so misconfiguration surfaces at host startup
+/// rather than at the first job iteration.
+/// </summary>
+/// <remarks>
+/// Implemented locally with just <c>Microsoft.Extensions.Hosting.Abstractions</c> so the library does not need
+/// to take a dependency on the full <c>Microsoft.Extensions.Hosting</c> package solely for
+/// <c>OptionsBuilder.ValidateOnStart()</c>.
+/// </remarks>
+internal sealed class SingletonJobOptionsValidationStartup(IOptions<SingletonJobOptions> options) : IHostedService
+{
+    public Task StartAsync(CancellationToken cancellationToken)
+    {
+        _ = options.Value;
+        return Task.CompletedTask;
+    }
+
+    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 }

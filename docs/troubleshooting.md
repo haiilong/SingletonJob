@@ -101,7 +101,7 @@ static partial void LogTick(ILogger logger, DateTimeOffset time);
 
 Treat the `logger` constructor parameter as write-only: forward it to `base(...)` and never touch it again.
 
-## "InvalidOperationException: SingletonJobOptions.ProjectName must be set"
+## "OptionsValidationException: SingletonJobOptions.ProjectName must be set"
 
 You called `services.AddSingletonJobs(...)` without supplying a `ProjectName`. The library deliberately ships **no default** for this value: a shared default would let two unrelated deployments sharing the same Redis instance silently collide on lock keys like `default:heartbeat:lock`.
 
@@ -126,7 +126,7 @@ SingletonJob__ProjectName=myapp
 services.PostConfigure<SingletonJobOptions>(o => o.ProjectName = "myapp");
 ```
 
-The check runs at host startup so a missing value fails fast rather than at the first job tick.
+The check is wired through `IValidateOptions<SingletonJobOptions>` and triggered by a tiny `IHostedService` that runs first, so a missing value fails at host startup rather than at the first job tick. Per-job overrides (`PostConfigureSingletonJob("name", ...)`) that clear `ProjectName` are caught when the affected job starts, with the message prefixed by `[Job: name]`.
 
 ## "I want to override `LockExpiry` for one job only"
 
