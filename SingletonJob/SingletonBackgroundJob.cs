@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -75,6 +77,18 @@ public abstract class SingletonBackgroundJob : BackgroundService
     private const string ReleaseScript =
         "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end";
 
+    // SHA1 is the Redis protocol's script identifier for EVALSHA, not a security use. Precomputing it
+    // lets each heartbeat send a 40-byte hash instead of the full script text.
+    private static readonly byte[] AcquireOrRenewScriptSha = SHA1.HashData(Encoding.ASCII.GetBytes(AcquireOrRenewScript));
+    private static readonly byte[] ReleaseScriptSha = SHA1.HashData(Encoding.ASCII.GetBytes(ReleaseScript));
+
+    // Script arguments are fixed after StartAsync (options are frozen there); cache the arrays instead of
+    // allocating them on every heartbeat.
+    private RedisKey[] _scriptKeys = null!;
+    private RedisValue[] _acquireOrRenewArgs = null!;
+    private RedisValue[] _releaseArgs = null!;
+    private long _leaseMs;
+
     /// <summary>Initializes the base job with Redis, options, and a logger.</summary>
     protected SingletonBackgroundJob(
         IConnectionMultiplexer redis,
@@ -98,6 +112,10 @@ public abstract class SingletonBackgroundJob : BackgroundService
         _db = _redis.GetDatabase();
         _nodeId = ResolveNodeId(_options);
         _lockKey = $"{_options.ProjectName}:{JobName}:lock";
+        _leaseMs = (long)_options.LockExpiry.TotalMilliseconds;
+        _scriptKeys = [_lockKey];
+        _acquireOrRenewArgs = [_nodeId, _leaseMs];
+        _releaseArgs = [_nodeId];
 
         var owner = RegisteredLockKeys.GetOrAdd(_lockKey, GetType());
         if (owner != GetType())
@@ -323,19 +341,15 @@ public abstract class SingletonBackgroundJob : BackgroundService
         }
 
         var leaseStart = Environment.TickCount64;
-        var leaseMs = (long)_options.LockExpiry.TotalMilliseconds;
 
-        var result = await _db!.ScriptEvaluateAsync(
-            AcquireOrRenewScript,
-            [_lockKey!],
-            [_nodeId!, leaseMs]
-        ).ConfigureAwait(false);
+        var result = await EvalScriptAsync(AcquireOrRenewScript, AcquireOrRenewScriptSha, _acquireOrRenewArgs)
+            .ConfigureAwait(false);
 
         var holdsLock = !result.IsNull && (long)result == 1;
 
         if (holdsLock)
         {
-            Volatile.Write(ref _leaseValidUntil, leaseStart + leaseMs);
+            Volatile.Write(ref _leaseValidUntil, leaseStart + _leaseMs);
             if (!Volatile.Read(ref _isLeader))
             {
                 Volatile.Write(ref _isLeader, true);
@@ -349,17 +363,28 @@ public abstract class SingletonBackgroundJob : BackgroundService
         }
     }
 
+    // Sends EVALSHA with the precomputed hash. On NOSCRIPT (first use against this server, or a Redis
+    // restart/failover that flushed the script cache) falls back to EVAL, which also re-registers the
+    // script server-side so subsequent EVALSHA calls succeed again.
+    private async Task<RedisResult> EvalScriptAsync(string script, byte[] scriptSha, RedisValue[] args)
+    {
+        try
+        {
+            return await _db!.ScriptEvaluateAsync(scriptSha, _scriptKeys, args).ConfigureAwait(false);
+        }
+        catch (RedisServerException ex) when (ex.Message.StartsWith("NOSCRIPT", StringComparison.Ordinal))
+        {
+            return await _db!.ScriptEvaluateAsync(script, _scriptKeys, args).ConfigureAwait(false);
+        }
+    }
+
     private async Task ReleaseLockAsync()
     {
         if (!Volatile.Read(ref _isLeader) || _db is null) return;
 
         try
         {
-            await _db.ScriptEvaluateAsync(
-                ReleaseScript,
-                [_lockKey!],
-                [_nodeId!]
-            ).ConfigureAwait(false);
+            await EvalScriptAsync(ReleaseScript, ReleaseScriptSha, _releaseArgs).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
