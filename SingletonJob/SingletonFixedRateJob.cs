@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using StackExchange.Redis;
@@ -32,9 +31,19 @@ public abstract class SingletonFixedRateJob : SingletonBackgroundJob
     }
 
     /// <inheritdoc />
+    protected SingletonFixedRateJob(
+        IConnectionMultiplexer redis,
+        IOptionsFactory<SingletonJobOptions> options,
+        ILogger logger,
+        TimeProvider timeProvider)
+        : base(redis, options, logger, timeProvider)
+    {
+    }
+
+    /// <inheritdoc />
     protected override async Task ExecuteJobLoopAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(ValidateJobInterval(GetJobInterval(), JobName));
+        using var timer = new PeriodicTimer(ValidateJobInterval(GetJobInterval(), JobName), TimeProvider);
 
         try
         {
@@ -64,7 +73,7 @@ public abstract class SingletonFixedRateJob : SingletonBackgroundJob
     private async Task ExecuteAndResetFlagAsync(CancellationToken cancellationToken)
     {
         Logger.LogDebug("Job {JobName} iteration starting", JobName);
-        var startTs = Stopwatch.GetTimestamp();
+        var startTs = TimeProvider.GetTimestamp();
         try
         {
             await ExecuteJobAsync(cancellationToken).ConfigureAwait(false);
@@ -79,7 +88,7 @@ public abstract class SingletonFixedRateJob : SingletonBackgroundJob
         }
         finally
         {
-            var elapsed = Stopwatch.GetElapsedTime(startTs);
+            var elapsed = TimeProvider.GetElapsedTime(startTs);
             Logger.LogDebug("Job {JobName} iteration completed in {ElapsedMs}ms", JobName, elapsed.TotalMilliseconds);
             WarnIfExecutionTimeTooLong(elapsed);
             _isJobRunning = false;

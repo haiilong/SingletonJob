@@ -82,8 +82,9 @@ internal sealed class CountingCronJob(
     ILogger<CountingCronJob> logger,
     CronExpression expr,
     string jobName,
-    TimeSpan workDuration = default)
-    : SingletonCronJob(redis, options, logger)
+    TimeSpan workDuration = default,
+    TimeProvider? timeProvider = null)
+    : SingletonCronJob(redis, options, logger, timeProvider ?? TimeProvider.System)
 {
     public int RunCount;
     public readonly List<DateTimeOffset> RunStarts = [];

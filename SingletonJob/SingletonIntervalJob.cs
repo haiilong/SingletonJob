@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using StackExchange.Redis;
@@ -28,6 +27,16 @@ public abstract class SingletonIntervalJob : SingletonBackgroundJob
     }
 
     /// <inheritdoc />
+    protected SingletonIntervalJob(
+        IConnectionMultiplexer redis,
+        IOptionsFactory<SingletonJobOptions> options,
+        ILogger logger,
+        TimeProvider timeProvider)
+        : base(redis, options, logger, timeProvider)
+    {
+    }
+
+    /// <inheritdoc />
     protected override async Task ExecuteJobLoopAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
@@ -35,7 +44,7 @@ public abstract class SingletonIntervalJob : SingletonBackgroundJob
             if (IsLeader && IsEnabled)
             {
                 Logger.LogDebug("Job {JobName} iteration starting", JobName);
-                var startTs = Stopwatch.GetTimestamp();
+                var startTs = TimeProvider.GetTimestamp();
                 try
                 {
                     await ExecuteJobAsync(stoppingToken).ConfigureAwait(false);
@@ -48,14 +57,14 @@ public abstract class SingletonIntervalJob : SingletonBackgroundJob
                 {
                     Logger.LogError(ex, "Job {JobName} execution failed.", JobName);
                 }
-                var elapsed = Stopwatch.GetElapsedTime(startTs);
+                var elapsed = TimeProvider.GetElapsedTime(startTs);
                 Logger.LogDebug("Job {JobName} iteration completed in {ElapsedMs}ms", JobName, elapsed.TotalMilliseconds);
                 WarnIfExecutionTimeTooLong(elapsed);
             }
 
             try
             {
-                await Task.Delay(ValidateJobInterval(GetJobInterval(), JobName), stoppingToken).ConfigureAwait(false);
+                await Task.Delay(ValidateJobInterval(GetJobInterval(), JobName), TimeProvider, stoppingToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {

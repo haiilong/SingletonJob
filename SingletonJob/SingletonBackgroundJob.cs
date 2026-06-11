@@ -28,16 +28,26 @@ public abstract class SingletonBackgroundJob : BackgroundService
     /// <summary>Implement to perform a single iteration of the job.</summary>
     protected abstract Task ExecuteJobAsync(CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Clock used for all waits, lease timestamps, and schedule evaluation. Defaults to
+    /// <see cref="System.TimeProvider.System"/>; pass a <c>FakeTimeProvider</c> through the constructor to
+    /// drive the job with virtual time in tests.
+    /// </summary>
+    protected TimeProvider TimeProvider { get; }
+
     private IDatabaseAsync? _db;
     private string? _nodeId;
     private string? _lockKey;
     private bool _isLeader;
     private bool _isEnabled = true;
 
-    // Lease deadline in Environment.TickCount64 milliseconds. Set on every successful acquire/renew from a
-    // timestamp taken BEFORE the Redis call, so the local fence is always at least as strict as the
-    // server-side TTL (the server applies the TTL at some point after we took the timestamp).
-    private long _leaseValidUntil;
+    // Timestamp (TimeProvider.GetTimestamp) of the last successful acquire/renew, taken BEFORE the Redis
+    // call so the local lease is always at least as strict as the server-side TTL (the server applies the
+    // TTL at some point after the timestamp was taken).
+    private long _leaseStartTimestamp;
+
+    private bool LeaseIsValid =>
+        TimeProvider.GetElapsedTime(Volatile.Read(ref _leaseStartTimestamp)) < _options.LockExpiry;
 
     /// <summary>
     /// True when this node currently holds the Redis leadership lock and the lease confirmed by the last
@@ -46,8 +56,7 @@ public abstract class SingletonBackgroundJob : BackgroundService
     /// since the last successful call: at that point the key has expired server-side and a peer may already
     /// own the lock, so this node self-demotes rather than risk duplicate execution.
     /// </summary>
-    protected bool IsLeader =>
-        Volatile.Read(ref _isLeader) && Environment.TickCount64 < Volatile.Read(ref _leaseValidUntil);
+    protected bool IsLeader => Volatile.Read(ref _isLeader) && LeaseIsValid;
 
     /// <summary>
     /// True when the job is currently enabled, as last observed by the election loop. Refreshed once per
@@ -89,15 +98,30 @@ public abstract class SingletonBackgroundJob : BackgroundService
     private RedisValue[] _releaseArgs = null!;
     private long _leaseMs;
 
-    /// <summary>Initializes the base job with Redis, options, and a logger.</summary>
+    /// <summary>Initializes the base job with Redis, options, and a logger, using the system clock.</summary>
     protected SingletonBackgroundJob(
         IConnectionMultiplexer redis,
         IOptionsFactory<SingletonJobOptions> optionsFactory,
         ILogger logger)
+        : this(redis, optionsFactory, logger, TimeProvider.System)
+    {
+    }
+
+    /// <summary>
+    /// Initializes the base job with an explicit <see cref="System.TimeProvider"/>. All waits, lease
+    /// timestamps, and schedule evaluations go through it, so tests can drive the job with a
+    /// <c>FakeTimeProvider</c> instead of waiting in real time.
+    /// </summary>
+    protected SingletonBackgroundJob(
+        IConnectionMultiplexer redis,
+        IOptionsFactory<SingletonJobOptions> optionsFactory,
+        ILogger logger,
+        TimeProvider timeProvider)
     {
         _redis = redis ?? throw new ArgumentNullException(nameof(redis));
         _optionsFactory = optionsFactory ?? throw new ArgumentNullException(nameof(optionsFactory));
         Logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        TimeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
     }
 
     /// <inheritdoc />
@@ -261,7 +285,7 @@ public abstract class SingletonBackgroundJob : BackgroundService
 
             try
             {
-                await Task.Delay(NextHeartbeatDelay(consecutiveFailures), stoppingToken).ConfigureAwait(false);
+                await Task.Delay(NextHeartbeatDelay(consecutiveFailures), TimeProvider, stoppingToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -331,8 +355,8 @@ public abstract class SingletonBackgroundJob : BackgroundService
     {
         // Self-fence: if the lease window lapsed without a successful renewal, the key has expired on the
         // server and a peer may already own it. IsLeader already reports false; clear the raw flag too so
-        // a successful SETNX below logs the "became LEADER" transition correctly.
-        if (Volatile.Read(ref _isLeader) && Environment.TickCount64 >= Volatile.Read(ref _leaseValidUntil))
+        // a successful acquisition below logs the "became LEADER" transition correctly.
+        if (Volatile.Read(ref _isLeader) && !LeaseIsValid)
         {
             Volatile.Write(ref _isLeader, false);
             Logger.LogWarning(
@@ -340,7 +364,7 @@ public abstract class SingletonBackgroundJob : BackgroundService
                 _nodeId, _lockKey);
         }
 
-        var leaseStart = Environment.TickCount64;
+        var leaseStart = TimeProvider.GetTimestamp();
 
         var result = await EvalScriptAsync(AcquireOrRenewScript, AcquireOrRenewScriptSha, _acquireOrRenewArgs)
             .ConfigureAwait(false);
@@ -349,7 +373,7 @@ public abstract class SingletonBackgroundJob : BackgroundService
 
         if (holdsLock)
         {
-            Volatile.Write(ref _leaseValidUntil, leaseStart + _leaseMs);
+            Volatile.Write(ref _leaseStartTimestamp, leaseStart);
             if (!Volatile.Read(ref _isLeader))
             {
                 Volatile.Write(ref _isLeader, true);

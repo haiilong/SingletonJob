@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Cronos;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -40,6 +39,16 @@ public abstract class SingletonCronJob : SingletonBackgroundJob
     }
 
     /// <inheritdoc />
+    protected SingletonCronJob(
+        IConnectionMultiplexer redis,
+        IOptionsFactory<SingletonJobOptions> options,
+        ILogger logger,
+        TimeProvider timeProvider)
+        : base(redis, options, logger, timeProvider)
+    {
+    }
+
+    /// <inheritdoc />
     protected override async Task ExecuteJobLoopAsync(CancellationToken stoppingToken)
     {
         var expr = GetCronExpression()
@@ -51,14 +60,14 @@ public abstract class SingletonCronJob : SingletonBackgroundJob
         // The pivot is an absolute instant (UTC); TimeZone is passed to Cronos below, which interprets
         // the cron fields in that zone (including DST transitions) and returns an absolute instant back.
         // Doing the arithmetic on absolute instants keeps it unambiguous across DST changes.
-        var pivot = DateTimeOffset.UtcNow.AddTicks(-1);
+        var pivot = TimeProvider.GetUtcNow().AddTicks(-1);
 
         while (!stoppingToken.IsCancellationRequested)
         {
             // Occurrences that passed while the previous iteration was running are skipped, not replayed.
             // Without this clamp a job slower than its cron period would fire back-to-back once per missed
             // occurrence (a catch-up storm). Skipping matches the drop semantics of the rest of the library.
-            var now = DateTimeOffset.UtcNow;
+            var now = TimeProvider.GetUtcNow();
             if (pivot < now) pivot = now;
 
             var next = expr.GetNextOccurrence(pivot, TimeZone, inclusive: false);
@@ -80,11 +89,11 @@ public abstract class SingletonCronJob : SingletonBackgroundJob
 
             try
             {
-                var delay = next.Value - DateTimeOffset.UtcNow;
+                var delay = next.Value - TimeProvider.GetUtcNow();
                 while (delay > TimeSpan.Zero)
                 {
-                    await Task.Delay(delay < MaxSleepChunk ? delay : MaxSleepChunk, stoppingToken).ConfigureAwait(false);
-                    delay = next.Value - DateTimeOffset.UtcNow;
+                    await Task.Delay(delay < MaxSleepChunk ? delay : MaxSleepChunk, TimeProvider, stoppingToken).ConfigureAwait(false);
+                    delay = next.Value - TimeProvider.GetUtcNow();
                 }
             }
             catch (OperationCanceledException)
@@ -95,7 +104,7 @@ public abstract class SingletonCronJob : SingletonBackgroundJob
             if (!IsLeader || !IsEnabled) continue;
 
             Logger.LogDebug("Cron job {JobName} firing for scheduled time {ScheduledTime:O}", JobName, next.Value);
-            var startTs = Stopwatch.GetTimestamp();
+            var startTs = TimeProvider.GetTimestamp();
             try
             {
                 await ExecuteJobAsync(stoppingToken).ConfigureAwait(false);
@@ -108,7 +117,7 @@ public abstract class SingletonCronJob : SingletonBackgroundJob
             {
                 Logger.LogError(ex, "Cron job {JobName} failed.", JobName);
             }
-            var elapsed = Stopwatch.GetElapsedTime(startTs);
+            var elapsed = TimeProvider.GetElapsedTime(startTs);
             Logger.LogDebug("Cron job {JobName} completed in {ElapsedMs}ms", JobName, elapsed.TotalMilliseconds);
             WarnIfExecutionTimeTooLong(elapsed);
         }

@@ -24,6 +24,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **`TimeProvider` support.** Every base class gained a constructor overload taking a `TimeProvider` (the existing constructors keep using `TimeProvider.System`). All waits, the election heartbeat, lease timestamps, iteration durations, and cron schedule evaluation go through it, so tests can drive a job across hours or days of virtual time with `FakeTimeProvider` in milliseconds. Exposed to derived classes as `protected TimeProvider TimeProvider`.
 - **Job enable/disable.**
   - `SingletonJobOptions.Enabled` (default `true`): a static kill switch, evaluated once at startup. Set `"SingletonJob": { "Enabled": false }` to disable every job in the project, or `PostConfigureSingletonJob("name", o => o.Enabled = false)` for one job. A statically disabled job starts, logs one line, and idles: no election, no Redis traffic.
   - `protected virtual ValueTask<bool> IsJobEnabledAsync(CancellationToken)` on `SingletonBackgroundJob`: a live toggle, re-evaluated once per `HeartbeatInterval`. Override it to bridge to a DI-injected feature-flag service; flips take effect within one heartbeat without redeploy. While disabled the node releases and stops competing for the leadership lock so an enabled replica can take over (relevant for per-node/canary flags). Exceptions from the override are logged and the previous state is kept.
