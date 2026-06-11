@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- **`SingletonCronJob` no longer replays missed occurrences back-to-back.** When an execution ran longer than the cron period, every missed occurrence used to fire immediately after the previous run finished (an every-minute job that once took 10 minutes would then run 10 times in a row). Missed occurrences are now skipped and the job resumes at the next future occurrence, matching the drop semantics of the rest of the library.
 - **A leader with a still-valid lease no longer backs off exponentially on Redis errors.** With the recommended settings two doubled delays already exceed `LockExpiry`, so any two consecutive hiccups used to forfeit the lock. The leader now retries at the plain `HeartbeatInterval` while its lease is valid; exponential backoff with jitter still applies to followers and to a demoted ex-leader.
 - **Split-brain on Redis partition: a leader that cannot reach Redis now demotes itself once `LockExpiry` elapses without a successful renewal.** Previously `IsLeader` stayed true while heartbeats failed, so a node partitioned from Redis kept executing its job while a peer acquired the expired lock and ran it too. The lease deadline is computed from a timestamp taken before each acquire/renew call, making the local fence at least as strict as the server-side TTL.
 

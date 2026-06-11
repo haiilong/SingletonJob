@@ -81,17 +81,21 @@ internal sealed class CountingCronJob(
     IOptionsFactory<SingletonJobOptions> options,
     ILogger<CountingCronJob> logger,
     CronExpression expr,
-    string jobName)
+    string jobName,
+    TimeSpan workDuration = default)
     : SingletonCronJob(redis, options, logger)
 {
     public int RunCount;
+    public readonly List<DateTimeOffset> RunStarts = [];
 
     public override string JobName { get; } = jobName;
     protected override CronExpression GetCronExpression() => expr;
 
-    protected override Task ExecuteJobAsync(CancellationToken cancellationToken)
+    protected override async Task ExecuteJobAsync(CancellationToken cancellationToken)
     {
+        lock (RunStarts) RunStarts.Add(DateTimeOffset.UtcNow);
         Interlocked.Increment(ref RunCount);
-        return Task.CompletedTask;
+        if (workDuration > TimeSpan.Zero)
+            await Task.Delay(workDuration, cancellationToken);
     }
 }

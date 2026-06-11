@@ -14,6 +14,8 @@ namespace SingletonJob;
 /// <remarks>
 /// Cron expressions are parsed by <see href="https://github.com/HangfireIO/Cronos">Cronos</see>. By default
 /// the schedule is interpreted in UTC; override <see cref="TimeZone"/> to use a different zone.
+/// Occurrences that pass while an execution is still running are skipped, not replayed: a job slower than
+/// its cron period resumes at the next future occurrence instead of firing once per missed occurrence.
 /// </remarks>
 public abstract class SingletonCronJob : SingletonBackgroundJob
 {
@@ -40,10 +42,19 @@ public abstract class SingletonCronJob : SingletonBackgroundJob
         // Track the pivot for the next-occurrence lookup so the loop strictly advances even if Cronos
         // returns a value at or before the pivot for second-precision expressions like "* * * * * *".
         // The pivot starts in the past so the first lookup returns the very next occurrence.
+        // The pivot is an absolute instant (UTC); TimeZone is passed to Cronos below, which interprets
+        // the cron fields in that zone (including DST transitions) and returns an absolute instant back.
+        // Doing the arithmetic on absolute instants keeps it unambiguous across DST changes.
         var pivot = DateTimeOffset.UtcNow.AddTicks(-1);
 
         while (!stoppingToken.IsCancellationRequested)
         {
+            // Occurrences that passed while the previous iteration was running are skipped, not replayed.
+            // Without this clamp a job slower than its cron period would fire back-to-back once per missed
+            // occurrence (a catch-up storm). Skipping matches the drop semantics of the rest of the library.
+            var now = DateTimeOffset.UtcNow;
+            if (pivot < now) pivot = now;
+
             var next = expr.GetNextOccurrence(pivot, TimeZone, inclusive: false);
             if (next is null)
             {
