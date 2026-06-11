@@ -16,6 +16,15 @@ GET  myapp:heartbeat:lock
 PTTL myapp:heartbeat:lock
 ```
 
+## "My job is not running at all"
+
+Check it isn't disabled:
+
+1. **Statically disabled.** `SingletonJob:Enabled` is `false` in config, or a `PostConfigureSingletonJob` sets `o.Enabled = false`. The job logs `Job {JobName} is disabled by configuration` once at startup and then idles.
+2. **Dynamically disabled.** The job overrides `IsJobEnabledAsync` and the flag source returns false. Look for `Job {JobName} is now DISABLED` (`Information`) and, if it was leader at the time, `disabled while leader. Releasing ...`.
+
+If neither appears, fall through to the next section.
+
 ## "Nobody is the leader"
 
 Look for `Leader election error` lines. Most likely Redis is unreachable; the heartbeat loop will keep retrying with exponential backoff capped at `MaxBackoffDelay` (default 30 s). Once Redis returns, leadership is reacquired automatically.

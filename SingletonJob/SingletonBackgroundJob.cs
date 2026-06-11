@@ -30,9 +30,16 @@ public abstract class SingletonBackgroundJob : BackgroundService
     private string? _nodeId;
     private string? _lockKey;
     private bool _isLeader;
+    private bool _isEnabled = true;
 
     /// <summary>True when this node currently holds the Redis leadership lock.</summary>
     protected bool IsLeader => Volatile.Read(ref _isLeader);
+
+    /// <summary>
+    /// True when the job is currently enabled, as last observed by the election loop. Refreshed once per
+    /// <see cref="SingletonJobOptions.HeartbeatInterval"/> from <see cref="IsJobEnabledAsync"/>.
+    /// </summary>
+    protected bool IsEnabled => Volatile.Read(ref _isEnabled);
 
     /// <summary>The configured options for this job (resolved on <see cref="StartAsync"/>).</summary>
     protected SingletonJobOptions Options => _options;
@@ -82,9 +89,30 @@ public abstract class SingletonBackgroundJob : BackgroundService
         return basePart + "-" + suffix;
     }
 
+    /// <summary>
+    /// Controls whether this job may run, re-evaluated by the election loop once per
+    /// <see cref="SingletonJobOptions.HeartbeatInterval"/>. The default returns true. Override to plug in a
+    /// live toggle: inject your feature-flag service into the derived job and query it here. While the
+    /// result is false this node skips iterations and releases / stops competing for the leadership lock,
+    /// so an enabled replica can take over; once it returns true again the node rejoins the election within
+    /// one heartbeat. An iteration already in flight when the flag flips is not cancelled.
+    /// Exceptions are logged and the previous value is kept, so a flaky flag backend does not flap the job.
+    /// Note: <see cref="SingletonJobOptions.Enabled"/> is checked first and wins; a statically disabled job
+    /// never calls this method.
+    /// </summary>
+    protected virtual ValueTask<bool> IsJobEnabledAsync(CancellationToken cancellationToken) => new(true);
+
     /// <inheritdoc />
     protected sealed override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (!_options.Enabled)
+        {
+            Logger.LogInformation(
+                "Job {JobName} is disabled by configuration (SingletonJobOptions.Enabled = false). " +
+                "It will not run or participate in leader election.", JobName);
+            return;
+        }
+
         var electionTask = RunLeaderElectionLoopAsync(stoppingToken);
 
         try
@@ -128,8 +156,22 @@ public abstract class SingletonBackgroundJob : BackgroundService
         {
             try
             {
-                await MaintainLeadershipAsync().ConfigureAwait(false);
+                if (await EvaluateEnabledAsync(stoppingToken).ConfigureAwait(false))
+                {
+                    await MaintainLeadershipAsync().ConfigureAwait(false);
+                }
+                else if (Volatile.Read(ref _isLeader))
+                {
+                    Logger.LogInformation(
+                        "Job {JobName} disabled while leader. Releasing {LockKey} so an enabled replica can take over.",
+                        JobName, _lockKey);
+                    await ReleaseLockAsync().ConfigureAwait(false);
+                }
                 consecutiveFailures = 0;
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
             }
             catch (Exception ex)
             {
@@ -163,6 +205,34 @@ public abstract class SingletonBackgroundJob : BackgroundService
         var jitterFraction = Random.Shared.NextDouble() * 0.4 - 0.2;
         var jitterTicks = (long)(baseDelay.Ticks * jitterFraction);
         return TimeSpan.FromTicks(Math.Max(baseDelay.Ticks + jitterTicks, _options.HeartbeatInterval.Ticks));
+    }
+
+    private async ValueTask<bool> EvaluateEnabledAsync(CancellationToken stoppingToken)
+    {
+        var previous = Volatile.Read(ref _isEnabled);
+        bool enabled;
+        try
+        {
+            enabled = await IsJobEnabledAsync(stoppingToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // A flaky flag backend should not flap leadership; keep the last known state.
+            Logger.LogWarning(ex,
+                "IsJobEnabledAsync threw for job {JobName}. Keeping previous state ({Enabled}).", JobName, previous);
+            return previous;
+        }
+
+        if (enabled != previous)
+        {
+            Volatile.Write(ref _isEnabled, enabled);
+            Logger.LogInformation("Job {JobName} is now {State}", JobName, enabled ? "ENABLED" : "DISABLED");
+        }
+        return enabled;
     }
 
     private async Task MaintainLeadershipAsync()

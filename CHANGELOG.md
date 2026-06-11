@@ -4,6 +4,15 @@ All notable changes to this project are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Job enable/disable.**
+  - `SingletonJobOptions.Enabled` (default `true`): a static kill switch, evaluated once at startup. Set `"SingletonJob": { "Enabled": false }` to disable every job in the project, or `PostConfigureSingletonJob("name", o => o.Enabled = false)` for one job. A statically disabled job starts, logs one line, and idles: no election, no Redis traffic.
+  - `protected virtual ValueTask<bool> IsJobEnabledAsync(CancellationToken)` on `SingletonBackgroundJob`: a live toggle, re-evaluated once per `HeartbeatInterval`. Override it to bridge to a DI-injected feature-flag service; flips take effect within one heartbeat without redeploy. While disabled the node releases and stops competing for the leadership lock so an enabled replica can take over (relevant for per-node/canary flags). Exceptions from the override are logged and the previous state is kept.
+  - `protected bool IsEnabled`: the last observed enabled state, checked by all three job loops before each iteration.
+
 ## [1.0.0] - 2026-05-11
 
 First stable release. The public API is now considered stable and follows semver; breaking changes will only ship with a major version bump.

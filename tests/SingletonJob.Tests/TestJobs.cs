@@ -25,6 +25,35 @@ internal sealed class CountingIntervalJob(
     }
 }
 
+internal sealed class ToggleableIntervalJob(
+    IConnectionMultiplexer redis,
+    IOptionsFactory<SingletonJobOptions> options,
+    ILogger<ToggleableIntervalJob> logger,
+    TimeSpan interval,
+    string jobName)
+    : SingletonIntervalJob(redis, options, logger)
+{
+    public int RunCount;
+    private volatile bool _enabled = true;
+
+    public bool Enabled
+    {
+        get => _enabled;
+        set => _enabled = value;
+    }
+
+    public override string JobName { get; } = jobName;
+    protected override TimeSpan GetJobInterval() => interval;
+
+    protected override ValueTask<bool> IsJobEnabledAsync(CancellationToken cancellationToken) => new(_enabled);
+
+    protected override Task ExecuteJobAsync(CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref RunCount);
+        return Task.CompletedTask;
+    }
+}
+
 internal sealed class CountingFixedRateJob(
     IConnectionMultiplexer redis,
     IOptionsFactory<SingletonJobOptions> options,

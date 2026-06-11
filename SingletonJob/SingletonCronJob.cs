@@ -74,7 +74,7 @@ public abstract class SingletonCronJob : SingletonBackgroundJob
                 }
             }
 
-            if (!IsLeader) continue;
+            if (!IsLeader || !IsEnabled) continue;
 
             Logger.LogDebug("Cron job {JobName} firing for scheduled time {ScheduledTime:O}", JobName, next.Value);
             var startTs = Stopwatch.GetTimestamp();

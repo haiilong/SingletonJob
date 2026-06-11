@@ -29,7 +29,7 @@ public abstract class SingletonIntervalJob : SingletonBackgroundJob
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            if (IsLeader)
+            if (IsLeader && IsEnabled)
             {
                 Logger.LogDebug("Job {JobName} iteration starting", JobName);
                 var startTs = Stopwatch.GetTimestamp();

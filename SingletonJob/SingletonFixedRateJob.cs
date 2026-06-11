@@ -36,7 +36,7 @@ public abstract class SingletonFixedRateJob : SingletonBackgroundJob
         {
             while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
             {
-                if (IsLeader && !_isJobRunning)
+                if (IsLeader && IsEnabled && !_isJobRunning)
                 {
                     _isJobRunning = true;
                     _currentRun = ExecuteAndResetFlagAsync(stoppingToken);

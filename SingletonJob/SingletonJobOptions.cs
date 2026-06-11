@@ -47,6 +47,16 @@ public class SingletonJobOptions
     /// </summary>
     public TimeSpan MaxBackoffDelay { get; set; } = TimeSpan.FromSeconds(30);
 
+    /// <summary>
+    /// Hard kill switch, evaluated once at startup. When false the job neither executes nor participates in
+    /// leader election; the hosted service starts and immediately idles. Set <c>"Enabled": false</c> in the
+    /// <c>SingletonJob</c> config section to disable every job in the project, or per job via
+    /// <c>PostConfigureSingletonJob("job-name", o =&gt; o.Enabled = false)</c>. For live (runtime) toggling,
+    /// e.g. from a feature-flag service, override <see cref="SingletonBackgroundJob.IsJobEnabledAsync"/>
+    /// instead. Default true.
+    /// </summary>
+    public bool Enabled { get; set; } = true;
+
     internal void Validate()
     {
         if (string.IsNullOrWhiteSpace(ProjectName))

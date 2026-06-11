@@ -148,8 +148,34 @@ Per-iteration noise is at Debug on purpose. High-frequency jobs would otherwise 
 | `LockExpiry`           | `00:00:10`  | TTL applied to the Redis lock key.                                       |
 | `NodeId`               | `null`      | Override identifier. Falls back to env `POD_NAME`, then `MachineName`.   |
 | `MaxBackoffDelay`      | `00:00:30`  | Ceiling on the exponential backoff delay between Redis error retries.    |
+| `Enabled`              | `true`      | Static kill switch. `false` = job never runs or competes for the lock.  |
 
 Validation runs on `StartAsync`; bad config throws. See [docs/configuration.md](docs/configuration.md) for per-job overrides.
+
+## Disabling jobs
+
+Two mechanisms, layered:
+
+```csharp
+// Static (evaluated once at startup):
+//   project level: appsettings.json "SingletonJob": { "Enabled": false }
+//   job level:
+builder.Services.PostConfigureSingletonJob("price-tick", o => o.Enabled = false);
+
+// Live (re-evaluated every HeartbeatInterval): inject your feature-flag service
+// into the job and override IsJobEnabledAsync:
+public sealed class PriceTickJob(
+    IConnectionMultiplexer r, IOptionsFactory<SingletonJobOptions> o,
+    ILogger<PriceTickJob> l, IFeatureFlags flags)
+    : SingletonFixedRateJob(r, o, l)
+{
+    protected override async ValueTask<bool> IsJobEnabledAsync(CancellationToken ct)
+        => await flags.IsEnabledAsync("jobs-enabled", ct)        // project-level flag
+        && await flags.IsEnabledAsync($"job-{JobName}", ct);     // per-job flag
+}
+```
+
+While disabled, the node releases the leadership lock and stops competing for it, so an *enabled* replica can take over (the flag may differ per node, e.g. a canary). Re-enabling rejoins the election within one `HeartbeatInterval`. See [docs/configuration.md](docs/configuration.md#disabling-jobs) for details.
 
 ## Documentation
 
