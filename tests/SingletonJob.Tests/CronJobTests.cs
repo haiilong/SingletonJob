@@ -101,4 +101,40 @@ public class CronJobTests(RedisFixture fx)
                 "missed occurrences must be skipped, not fired immediately after the previous run");
         }
     }
+
+    [Fact]
+    public async Task FireOnce_policy_runs_a_catch_up_execution_after_an_overrun()
+    {
+        await using var redis = await fx.ConnectAsync();
+        var opts = new StaticOptionsFactory<SingletonJobOptions>(new SingletonJobOptions
+        {
+            ProjectName = Guid.NewGuid().ToString("N"),
+            HeartbeatInterval = TimeSpan.FromMilliseconds(200),
+            LockExpiry = TimeSpan.FromSeconds(5),
+        });
+
+        // Same overrun shape as the Skip test (2s schedule, 3s work), but with FireOnce the missed
+        // occurrence triggers an immediate catch-up run: starts are ~3s apart instead of the 4s grid.
+        var expr = CronExpression.Parse("*/2 * * * * *", CronFormat.IncludeSeconds);
+        var job = new CountingCronJob(redis, opts,
+            NullLogger<CountingCronJob>.Instance,
+            expr, "fireonce", workDuration: TimeSpan.FromSeconds(3),
+            misfirePolicy: CronMisfirePolicy.FireOnce);
+
+        using var cts = new CancellationTokenSource();
+        await job.StartAsync(cts.Token);
+
+        await Task.Delay(11000, cts.Token);
+        await cts.CancelAsync();
+        await job.StopAsync(CancellationToken.None);
+
+        job.RunCount.Should().BeGreaterThanOrEqualTo(3);
+        List<DateTimeOffset> starts;
+        lock (job.RunStarts) starts = [.. job.RunStarts];
+        for (var i = 1; i < starts.Count; i++)
+        {
+            (starts[i] - starts[i - 1]).Should().BeLessThanOrEqualTo(TimeSpan.FromSeconds(3.5),
+                "FireOnce must run a catch-up execution right after the overrunning one");
+        }
+    }
 }

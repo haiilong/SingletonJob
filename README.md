@@ -104,6 +104,7 @@ public sealed class DailyReportJob(IConnectionMultiplexer r, IOptionsFactory<Sin
     protected override CronExpression GetCronExpression() => Expr;
     // optional: protected override TimeZoneInfo TimeZone => TimeZoneInfo.FindSystemTimeZoneById("Asia/Singapore");
     // or if you prefer local time: protected override TimeZoneInfo TimeZone => TimeZoneInfo.Local;
+    // optional: protected override CronMisfirePolicy MisfirePolicy => CronMisfirePolicy.FireOnce;
     protected override Task ExecuteJobAsync(CancellationToken ct) { /* ... */ return Task.CompletedTask; }
 }
 ```

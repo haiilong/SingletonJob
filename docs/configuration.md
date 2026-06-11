@@ -102,6 +102,28 @@ Semantics:
 
 If you want the same flag logic on every job, put the override in an intermediate base class per shape and derive your jobs from that.
 
+## Cron misfire policy
+
+When a `SingletonCronJob` occurrence passes without firing (the previous execution overran the period, the process was suspended, or the clock jumped forward), the job applies its `MisfirePolicy`:
+
+| Policy | Behavior | Use for |
+|---|---|---|
+| `Skip` (default) | Drop everything missed; resume at the next future occurrence. | Frequent schedules where the next run supersedes the missed one. |
+| `FireOnce` | Run one execution immediately to cover all missed occurrences, then resume the schedule. | Hourly or daily jobs where running late beats not running at all. |
+| `CatchUp` | Replay every missed occurrence back-to-back. | Each occurrence processes a distinct time bucket and must not be lost. |
+
+```csharp
+public sealed class DailyReportJob : SingletonCronJob
+{
+    protected override CronMisfirePolicy MisfirePolicy => CronMisfirePolicy.FireOnce;
+    // ...
+}
+```
+
+Misfires under `Skip` and `FireOnce` log at `Warning`; under `CatchUp` each replay logs at `Debug` to avoid log storms after a long gap.
+
+Note the scope: the policy covers occurrences missed while the process is running. An occurrence missed because no replica held leadership at the scheduled moment (for example, mid-failover) is not detected; every replica's loop fired on time, it just was not the leader.
+
 ## Kubernetes / environment
 
 `POD_NAME` is read automatically when `Options.NodeId` is null. With the standard k8s downward API:

@@ -13,8 +13,9 @@ namespace SingletonJob;
 /// <remarks>
 /// Cron expressions are parsed by <see href="https://github.com/HangfireIO/Cronos">Cronos</see>. By default
 /// the schedule is interpreted in UTC; override <see cref="TimeZone"/> to use a different zone.
-/// Occurrences that pass while an execution is still running are skipped, not replayed: a job slower than
-/// its cron period resumes at the next future occurrence instead of firing once per missed occurrence.
+/// Occurrences that pass without firing (slow execution, process suspension, clock jumps) are handled
+/// according to <see cref="MisfirePolicy"/>; the default skips them and resumes at the next future
+/// occurrence.
 /// </remarks>
 public abstract class SingletonCronJob : SingletonBackgroundJob
 {
@@ -28,6 +29,13 @@ public abstract class SingletonCronJob : SingletonBackgroundJob
 
     /// <summary>Time zone used to evaluate the cron expression. Defaults to UTC.</summary>
     protected virtual TimeZoneInfo TimeZone => TimeZoneInfo.Utc;
+
+    /// <summary>
+    /// How missed occurrences are handled. Defaults to <see cref="CronMisfirePolicy.Skip"/>. Override with
+    /// <see cref="CronMisfirePolicy.FireOnce"/> for infrequent jobs (hourly, daily) where running late is
+    /// better than not running at all.
+    /// </summary>
+    protected virtual CronMisfirePolicy MisfirePolicy => CronMisfirePolicy.Skip;
 
     /// <inheritdoc />
     protected SingletonCronJob(
@@ -64,12 +72,6 @@ public abstract class SingletonCronJob : SingletonBackgroundJob
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            // Occurrences that passed while the previous iteration was running are skipped, not replayed.
-            // Without this clamp a job slower than its cron period would fire back-to-back once per missed
-            // occurrence (a catch-up storm). Skipping matches the drop semantics of the rest of the library.
-            var now = TimeProvider.GetUtcNow();
-            if (pivot < now) pivot = now;
-
             var next = expr.GetNextOccurrence(pivot, TimeZone, inclusive: false);
             if (next is null)
             {
@@ -87,18 +89,48 @@ public abstract class SingletonCronJob : SingletonBackgroundJob
 
             pivot = next.Value;
 
-            try
+            var now = TimeProvider.GetUtcNow();
+            if (next.Value <= now)
             {
-                var delay = next.Value - TimeProvider.GetUtcNow();
-                while (delay > TimeSpan.Zero)
+                // The occurrence already passed: a misfire. Happens when the previous execution overran
+                // the cron period, the process was suspended, or the clock jumped forward.
+                switch (MisfirePolicy)
                 {
-                    await Task.Delay(delay < MaxSleepChunk ? delay : MaxSleepChunk, TimeProvider, stoppingToken).ConfigureAwait(false);
-                    delay = next.Value - TimeProvider.GetUtcNow();
+                    case CronMisfirePolicy.Skip:
+                        Logger.LogWarning(
+                            "Cron job {JobName} missed scheduled time {ScheduledTime:O}. Policy Skip: resuming at the next future occurrence.",
+                            JobName, next.Value);
+                        pivot = now;
+                        continue;
+                    case CronMisfirePolicy.FireOnce:
+                        // Collapse everything missed into the single immediate run below.
+                        Logger.LogWarning(
+                            "Cron job {JobName} missed scheduled time {ScheduledTime:O}. Policy FireOnce: running one catch-up execution now.",
+                            JobName, next.Value);
+                        pivot = now;
+                        break;
+                    default: // CatchUp: fire for this occurrence now; the loop replays the rest one by one.
+                        Logger.LogDebug(
+                            "Cron job {JobName} missed scheduled time {ScheduledTime:O}. Policy CatchUp: replaying it now.",
+                            JobName, next.Value);
+                        break;
                 }
             }
-            catch (OperationCanceledException)
+            else
             {
-                break;
+                try
+                {
+                    var delay = next.Value - now;
+                    while (delay > TimeSpan.Zero)
+                    {
+                        await Task.Delay(delay < MaxSleepChunk ? delay : MaxSleepChunk, TimeProvider, stoppingToken).ConfigureAwait(false);
+                        delay = next.Value - TimeProvider.GetUtcNow();
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
             }
 
             if (!IsLeader || !IsEnabled) continue;

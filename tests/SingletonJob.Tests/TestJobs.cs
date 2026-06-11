@@ -121,7 +121,8 @@ internal sealed class CountingCronJob(
     CronExpression expr,
     string jobName,
     TimeSpan workDuration = default,
-    TimeProvider? timeProvider = null)
+    TimeProvider? timeProvider = null,
+    CronMisfirePolicy misfirePolicy = CronMisfirePolicy.Skip)
     : SingletonCronJob(redis, options, logger, timeProvider ?? TimeProvider.System)
 {
     public int RunCount;
@@ -129,6 +130,7 @@ internal sealed class CountingCronJob(
 
     public override string JobName { get; } = jobName;
     protected override CronExpression GetCronExpression() => expr;
+    protected override CronMisfirePolicy MisfirePolicy => misfirePolicy;
 
     protected override async Task ExecuteJobAsync(CancellationToken cancellationToken)
     {
