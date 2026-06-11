@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Cronos;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -14,14 +13,29 @@ namespace SingletonJob;
 /// <remarks>
 /// Cron expressions are parsed by <see href="https://github.com/HangfireIO/Cronos">Cronos</see>. By default
 /// the schedule is interpreted in UTC; override <see cref="TimeZone"/> to use a different zone.
+/// Occurrences that pass without firing (slow execution, process suspension, clock jumps) are handled
+/// according to <see cref="MisfirePolicy"/>; the default skips them and resumes at the next future
+/// occurrence.
 /// </remarks>
 public abstract class SingletonCronJob : SingletonBackgroundJob
 {
+    // Task.Delay rejects anything above uint.MaxValue - 1 milliseconds (~49.7 days), which a sparse cron
+    // (yearly, specific dates) easily exceeds. Sleeping in bounded chunks and recomputing the remaining
+    // time also keeps the wake-up accurate if the system clock is adjusted during a long sleep.
+    private static readonly TimeSpan MaxSleepChunk = TimeSpan.FromDays(1);
+
     /// <summary>Implement to return the parsed cron expression. Use <see cref="CronExpression.Parse(string)"/>.</summary>
     protected abstract CronExpression GetCronExpression();
 
     /// <summary>Time zone used to evaluate the cron expression. Defaults to UTC.</summary>
     protected virtual TimeZoneInfo TimeZone => TimeZoneInfo.Utc;
+
+    /// <summary>
+    /// How missed occurrences are handled. Defaults to <see cref="CronMisfirePolicy.Skip"/>. Override with
+    /// <see cref="CronMisfirePolicy.FireOnce"/> for infrequent jobs (hourly, daily) where running late is
+    /// better than not running at all.
+    /// </summary>
+    protected virtual CronMisfirePolicy MisfirePolicy => CronMisfirePolicy.Skip;
 
     /// <inheritdoc />
     protected SingletonCronJob(
@@ -33,14 +47,28 @@ public abstract class SingletonCronJob : SingletonBackgroundJob
     }
 
     /// <inheritdoc />
+    protected SingletonCronJob(
+        IConnectionMultiplexer redis,
+        IOptionsFactory<SingletonJobOptions> options,
+        ILogger logger,
+        TimeProvider timeProvider)
+        : base(redis, options, logger, timeProvider)
+    {
+    }
+
+    /// <inheritdoc />
     protected override async Task ExecuteJobLoopAsync(CancellationToken stoppingToken)
     {
-        var expr = GetCronExpression();
+        var expr = GetCronExpression()
+            ?? throw new InvalidOperationException($"Job '{JobName}': GetCronExpression() returned null.");
 
         // Track the pivot for the next-occurrence lookup so the loop strictly advances even if Cronos
         // returns a value at or before the pivot for second-precision expressions like "* * * * * *".
         // The pivot starts in the past so the first lookup returns the very next occurrence.
-        var pivot = DateTimeOffset.UtcNow.AddTicks(-1);
+        // The pivot is an absolute instant (UTC); TimeZone is passed to Cronos below, which interprets
+        // the cron fields in that zone (including DST transitions) and returns an absolute instant back.
+        // Doing the arithmetic on absolute instants keeps it unambiguous across DST changes.
+        var pivot = TimeProvider.GetUtcNow().AddTicks(-1);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -61,12 +89,43 @@ public abstract class SingletonCronJob : SingletonBackgroundJob
 
             pivot = next.Value;
 
-            var delay = next.Value - DateTimeOffset.UtcNow;
-            if (delay > TimeSpan.Zero)
+            var now = TimeProvider.GetUtcNow();
+            if (next.Value <= now)
+            {
+                // The occurrence already passed: a misfire. Happens when the previous execution overran
+                // the cron period, the process was suspended, or the clock jumped forward.
+                switch (MisfirePolicy)
+                {
+                    case CronMisfirePolicy.Skip:
+                        Logger.LogWarning(
+                            "Cron job {JobName} missed scheduled time {ScheduledTime:O}. Policy Skip: resuming at the next future occurrence.",
+                            JobName, next.Value);
+                        pivot = now;
+                        continue;
+                    case CronMisfirePolicy.FireOnce:
+                        // Collapse everything missed into the single immediate run below.
+                        Logger.LogWarning(
+                            "Cron job {JobName} missed scheduled time {ScheduledTime:O}. Policy FireOnce: running one catch-up execution now.",
+                            JobName, next.Value);
+                        pivot = now;
+                        break;
+                    default: // CatchUp: fire for this occurrence now; the loop replays the rest one by one.
+                        Logger.LogDebug(
+                            "Cron job {JobName} missed scheduled time {ScheduledTime:O}. Policy CatchUp: replaying it now.",
+                            JobName, next.Value);
+                        break;
+                }
+            }
+            else
             {
                 try
                 {
-                    await Task.Delay(delay, stoppingToken).ConfigureAwait(false);
+                    var delay = next.Value - now;
+                    while (delay > TimeSpan.Zero)
+                    {
+                        await Task.Delay(delay < MaxSleepChunk ? delay : MaxSleepChunk, TimeProvider, stoppingToken).ConfigureAwait(false);
+                        delay = next.Value - TimeProvider.GetUtcNow();
+                    }
                 }
                 catch (OperationCanceledException)
                 {
@@ -74,23 +133,27 @@ public abstract class SingletonCronJob : SingletonBackgroundJob
                 }
             }
 
-            if (!IsLeader) continue;
+            if (!IsLeader || !IsEnabled) continue;
 
             Logger.LogDebug("Cron job {JobName} firing for scheduled time {ScheduledTime:O}", JobName, next.Value);
-            var startTs = Stopwatch.GetTimestamp();
+            var startTs = TimeProvider.GetTimestamp();
             try
             {
-                await ExecuteJobAsync(stoppingToken).ConfigureAwait(false);
+                await ExecuteIterationAsync(stoppingToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 break;
             }
+            catch (OperationCanceledException)
+            {
+                Logger.LogInformation("Job {JobName} iteration cancelled after leadership was lost.", JobName);
+            }
             catch (Exception ex)
             {
                 Logger.LogError(ex, "Cron job {JobName} failed.", JobName);
             }
-            var elapsed = Stopwatch.GetElapsedTime(startTs);
+            var elapsed = TimeProvider.GetElapsedTime(startTs);
             Logger.LogDebug("Cron job {JobName} completed in {ElapsedMs}ms", JobName, elapsed.TotalMilliseconds);
             WarnIfExecutionTimeTooLong(elapsed);
         }

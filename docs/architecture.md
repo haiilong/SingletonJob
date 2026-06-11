@@ -9,29 +9,30 @@
 
 Each job class produces one lock key. Each replica generates one `NodeId` per process. `NodeId = (Options.NodeId ?? POD_NAME ?? MachineName) + "-" + Guid8`.
 
-## Acquisition (`SETNX`)
+## Acquire or renew (Lua, atomic)
 
-Every `HeartbeatInterval` each replica issues:
-
-```redis
-SET {lockKey} {nodeId} NX PX {LockExpiry}
-```
-
-The first replica to issue this wins and becomes leader. The others get `null` back and stay followers.
-
-## Renewal (Lua, atomic)
-
-Once leader, the same loop renews the TTL using a Lua script that only succeeds if the lock value still matches our `NodeId`:
+Every `HeartbeatInterval` each replica runs one Lua script that acquires the lock if it is free, or extends the TTL if this node already owns it:
 
 ```lua
-if redis.call('GET', KEYS[1]) == ARGV[1] then
-    return redis.call('PEXPIRE', KEYS[1], ARGV[2])
+local v = redis.call('GET', KEYS[1])
+if not v then
+    redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
+    return 1
+elseif v == ARGV[1] then
+    redis.call('PEXPIRE', KEYS[1], ARGV[2])
+    return 1
 else
     return 0
 end
 ```
 
-If the script returns 0 the leader drops `IsLeader`. It was preempted, presumably because too many renewals were missed and the lock expired before another node acquired it.
+`ARGV[1]` is the node id, `ARGV[2]` is `LockExpiry` in milliseconds. The first replica to run it against a free key wins and becomes leader; for the steady-state leader every heartbeat is a single round trip that renews the TTL. Followers get 0 back and stay followers.
+
+If the script returns 0 for a node that thought it was leader, it drops `IsLeader`. It was preempted, presumably because too many renewals were missed and the lock expired before another node acquired it.
+
+## Self-fencing on missed renewals
+
+The renewal path above only detects preemption when Redis is reachable. To cover the partition case (only this node loses Redis connectivity, the key expires server-side, a peer takes over), the leader also fences itself locally. Every successful acquire/renew records a lease deadline: a timestamp taken before the Redis call plus `LockExpiry`. `IsLeader` returns false once that deadline passes without another successful renewal, so the job loop stops executing even while the election loop is still failing and backing off. Taking the timestamp before the call makes the local fence at least as strict as the server-side TTL.
 
 ## Release on graceful shutdown (Lua, atomic)
 
@@ -58,6 +59,8 @@ delay = min(HeartbeatInterval × 2^failures, MaxBackoffDelay) ± 20% jitter
 ```
 
 The jitter prevents a thundering herd of N replicas reconnecting in lockstep when Redis comes back. Reset to 0 on the first successful call.
+
+A leader whose lease is still valid is exempt from the backoff and retries at the plain `HeartbeatInterval`. Backing off would forfeit the lock: with the recommended `LockExpiry >= 3 × HeartbeatInterval`, two doubled delays already exceed the TTL. Once the lease lapses the node self-demotes (see self-fencing above) and the follower backoff takes over.
 
 ## Concurrency model
 

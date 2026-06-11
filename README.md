@@ -104,6 +104,7 @@ public sealed class DailyReportJob(IConnectionMultiplexer r, IOptionsFactory<Sin
     protected override CronExpression GetCronExpression() => Expr;
     // optional: protected override TimeZoneInfo TimeZone => TimeZoneInfo.FindSystemTimeZoneById("Asia/Singapore");
     // or if you prefer local time: protected override TimeZoneInfo TimeZone => TimeZoneInfo.Local;
+    // optional: protected override CronMisfirePolicy MisfirePolicy => CronMisfirePolicy.FireOnce;
     protected override Task ExecuteJobAsync(CancellationToken ct) { /* ... */ return Task.CompletedTask; }
 }
 ```
@@ -113,8 +114,8 @@ That's it. Deploy N replicas. Exactly one runs the job.
 ## How it works
 
 1. Each replica derives `_lockKey = "{ProjectName}:{JobName}:lock"` and a unique `_nodeId`.
-2. Every `HeartbeatInterval` (default 3 s), each replica issues a Redis `SET key value NX PX <LockExpiry>`. The first one wins and becomes leader.
-3. The leader renews the TTL with an atomic Lua script (`GET == nodeId ? PEXPIRE : 0`) so only the holder can extend it.
+2. Every `HeartbeatInterval` (default 3 s), each replica runs one atomic Lua script: acquire the lock with `PX <LockExpiry>` if it is free, renew the TTL if this node already holds it. The first one wins and becomes leader; only the holder can extend the TTL.
+3. Followers get `0` back and stay followers, retrying on the next heartbeat.
 4. The job loop checks `IsLeader` each iteration and only runs work if true.
 5. On graceful shutdown the leader runs an atomic release Lua script (`GET == nodeId ? DEL : 0`). This enables **fast failover**: the next replica acquires the lock within `HeartbeatInterval` instead of waiting `LockExpiry` for it to expire.
 6. On hard kill (SIGKILL, OOM), the lock simply expires after `LockExpiry`.
@@ -143,13 +144,40 @@ Per-iteration noise is at Debug on purpose. High-frequency jobs would otherwise 
 
 | Option                 | Default     | Description                                                              |
 |------------------------|-------------|--------------------------------------------------------------------------|
-| `ProjectName`          | `default`   | Lock key prefix. Pick a unique value per deployment.                     |
+| `ProjectName`          | _(required)_ | Lock key prefix. Must be set explicitly. The host throws at startup if empty. |
 | `HeartbeatInterval`    | `00:00:03`  | How often to attempt acquire/renew.                                      |
 | `LockExpiry`           | `00:00:10`  | TTL applied to the Redis lock key.                                       |
 | `NodeId`               | `null`      | Override identifier. Falls back to env `POD_NAME`, then `MachineName`.   |
 | `MaxBackoffDelay`      | `00:00:30`  | Ceiling on the exponential backoff delay between Redis error retries.    |
+| `Enabled`              | `true`      | Static kill switch. `false` = job never runs or competes for the lock.  |
+| `CancelOnLostLeadership` | `false`   | Fire the iteration's token when leadership is lost mid-run.             |
 
 Validation runs on `StartAsync`; bad config throws. See [docs/configuration.md](docs/configuration.md) for per-job overrides.
+
+## Disabling jobs
+
+Two mechanisms, layered:
+
+```csharp
+// Static (evaluated once at startup):
+//   project level: appsettings.json "SingletonJob": { "Enabled": false }
+//   job level:
+builder.Services.PostConfigureSingletonJob("price-tick", o => o.Enabled = false);
+
+// Live (re-evaluated every HeartbeatInterval): inject your feature-flag service
+// into the job and override IsJobEnabledAsync:
+public sealed class PriceTickJob(
+    IConnectionMultiplexer r, IOptionsFactory<SingletonJobOptions> o,
+    ILogger<PriceTickJob> l, IFeatureFlags flags)
+    : SingletonFixedRateJob(r, o, l)
+{
+    protected override async ValueTask<bool> IsJobEnabledAsync(CancellationToken ct)
+        => await flags.IsEnabledAsync("jobs-enabled", ct)        // project-level flag
+        && await flags.IsEnabledAsync($"job-{JobName}", ct);     // per-job flag
+}
+```
+
+While disabled, the node releases the leadership lock and stops competing for it, so an *enabled* replica can take over (the flag may differ per node, e.g. a canary). Re-enabling rejoins the election within one `HeartbeatInterval`. See [docs/configuration.md](docs/configuration.md#disabling-jobs) for details.
 
 ## Documentation
 
@@ -178,7 +206,6 @@ docker compose up --build --scale worker=3
 - Built-in `IHealthCheck` so Kubernetes readiness probes can detect a wedged election loop.
 - Metrics via `System.Diagnostics.Metrics` (counters for ticks, dropped ticks, leadership flips, durations).
 - `ActivitySource` tracing per iteration for distributed tracing.
-- Configurable cancellation on lost leadership (today: started iterations always run to completion).
 - SQL Server / PostgreSQL backends. (Not on near roadmap. Redis remains the supported backend.)
 
 ## License

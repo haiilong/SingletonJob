@@ -4,6 +4,34 @@ All notable changes to this project are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-06-11
+
+### Fixed
+
+- **The source generator no longer emits uncompilable code for generic job classes.** A non-abstract generic subclass of `SingletonBackgroundJob` produced a `ServiceDescriptor` referencing an open generic type, which failed to compile inside generated code. Generic job classes are now skipped and reported as warning `SJOB001` with guidance to register a closed subclass or register manually.
+- **Two different job classes sharing a `JobName` now throw at startup.** They used to silently contend for the same lock, so one of them never ran and nothing in the logs explained why. Multiple instances of the same class (multi-replica deployments, in-process simulations) remain allowed.
+- **Invalid `GetJobInterval()` values now fail with a clear error, and a dead job loop no longer keeps the lock alive.** A zero or negative interval used to surface as a bare `ArgumentOutOfRangeException` from deep inside `Task.Delay` or `PeriodicTimer`; it now throws `InvalidOperationException` naming the job. In addition, when the job loop exits for any non-shutdown reason (invalid configuration, an escaping exception, a cron schedule with no future occurrences), the election loop is now stopped and the lock released immediately. Previously the failure stayed invisible until host shutdown while the node kept renewing a lock for a job that no longer ran, starving healthy replicas.
+- **`SingletonCronJob` no longer crashes on schedules more than ~49.7 days away.** `Task.Delay` rejects delays above `uint.MaxValue - 1` milliseconds, so a yearly cron threw `ArgumentOutOfRangeException` and killed the job loop. Long waits are now slept in one-day chunks with the remaining time recomputed after each chunk, which also keeps the wake-up accurate across system clock adjustments.
+- **`SingletonCronJob` no longer replays missed occurrences back-to-back.** When an execution ran longer than the cron period, every missed occurrence used to fire immediately after the previous run finished (an every-minute job that once took 10 minutes would then run 10 times in a row). Missed occurrences are now skipped and the job resumes at the next future occurrence, matching the drop semantics of the rest of the library.
+- **A leader with a still-valid lease no longer backs off exponentially on Redis errors.** With the recommended settings two doubled delays already exceed `LockExpiry`, so any two consecutive hiccups used to forfeit the lock. The leader now retries at the plain `HeartbeatInterval` while its lease is valid; exponential backoff with jitter still applies to followers and to a demoted ex-leader.
+- **Split-brain on Redis partition: a leader that cannot reach Redis now demotes itself once `LockExpiry` elapses without a successful renewal.** Previously `IsLeader` stayed true while heartbeats failed, so a node partitioned from Redis kept executing its job while a peer acquired the expired lock and ran it too. The lease deadline is computed from a timestamp taken before each acquire/renew call, making the local fence at least as strict as the server-side TTL.
+
+### Changed
+
+- **`ConfigureSingletonJobOptions` no longer binds the default options instance twice.** `ConfigureAll` already applies to every named instance including the default, so the extra `Configure` registration only repeated the same work. Behavior is unchanged.
+- **Lua scripts are sent as `EVALSHA` with precomputed hashes, with an automatic `EVAL` fallback on `NOSCRIPT`** (first use, or a Redis restart/failover that flushed the script cache). The script key and argument arrays are also cached per job instead of being allocated on every heartbeat.
+- **Leadership acquire and renew are now one atomic Lua script, halving the steady-state leader's Redis round trips.** Previously every heartbeat from the leader issued a `SET NX` (which failed because the key exists) followed by a separate renew script. The combined script takes the lock if free, extends the TTL if this node owns it, and returns whether the node holds the lock.
+
+### Added
+
+- **Cron misfire policy** via `protected virtual CronMisfirePolicy MisfirePolicy` on `SingletonCronJob` (default `Skip`). `Skip` drops missed occurrences and resumes at the next future one; `FireOnce` runs a single immediate catch-up execution covering everything missed, for hourly or daily jobs where running late beats not running; `CatchUp` replays every missed occurrence back-to-back for time-bucketed work. Misfires log at `Warning` (`Debug` per replay under `CatchUp`).
+- **Cancellation on lost leadership** via `SingletonJobOptions.CancelOnLostLeadership` (default `false`, preserving 1.0 behavior). When enabled, the `CancellationToken` passed to `ExecuteJobAsync` fires not only on host shutdown but also when this node's leadership term ends mid-iteration: lock preemption, lease expiry, or a live disable. A job that honors its token therefore stops almost immediately when another node may take over, closing most of the remaining duplicate-execution window. Cancelled iterations log at `Information`, not as errors.
+- **`TimeProvider` support.** Every base class gained a constructor overload taking a `TimeProvider` (the existing constructors keep using `TimeProvider.System`). All waits, the election heartbeat, lease timestamps, iteration durations, and cron schedule evaluation go through it, so tests can drive a job across hours or days of virtual time with `FakeTimeProvider` in milliseconds. Exposed to derived classes as `protected TimeProvider TimeProvider`.
+- **Job enable/disable.**
+  - `SingletonJobOptions.Enabled` (default `true`): a static kill switch, evaluated once at startup. Set `"SingletonJob": { "Enabled": false }` to disable every job in the project, or `PostConfigureSingletonJob("name", o => o.Enabled = false)` for one job. A statically disabled job starts, logs one line, and idles: no election, no Redis traffic.
+  - `protected virtual ValueTask<bool> IsJobEnabledAsync(CancellationToken)` on `SingletonBackgroundJob`: a live toggle, re-evaluated once per `HeartbeatInterval`. Override it to bridge to a DI-injected feature-flag service; flips take effect within one heartbeat without redeploy. While disabled the node releases and stops competing for the leadership lock so an enabled replica can take over (relevant for per-node/canary flags). Exceptions from the override are logged and the previous state is kept.
+  - `protected bool IsEnabled`: the last observed enabled state, checked by all three job loops before each iteration.
+
 ## [1.0.0] - 2026-05-11
 
 First stable release. The public API is now considered stable and follows semver; breaking changes will only ship with a major version bump.

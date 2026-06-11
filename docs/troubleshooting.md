@@ -16,6 +16,15 @@ GET  myapp:heartbeat:lock
 PTTL myapp:heartbeat:lock
 ```
 
+## "My job is not running at all"
+
+Check it isn't disabled:
+
+1. **Statically disabled.** `SingletonJob:Enabled` is `false` in config, or a `PostConfigureSingletonJob` sets `o.Enabled = false`. The job logs `Job {JobName} is disabled by configuration` once at startup and then idles.
+2. **Dynamically disabled.** The job overrides `IsJobEnabledAsync` and the flag source returns false. Look for `Job {JobName} is now DISABLED` (`Information`) and, if it was leader at the time, `disabled while leader. Releasing ...`.
+
+If neither appears, fall through to the next section.
+
 ## "Nobody is the leader"
 
 Look for `Leader election error` lines. Most likely Redis is unreachable; the heartbeat loop will keep retrying with exponential backoff capped at `MaxBackoffDelay` (default 30 s). Once Redis returns, leadership is reacquired automatically.
@@ -100,6 +109,33 @@ static partial void LogTick(ILogger logger, DateTimeOffset time);
 ```
 
 Treat the `logger` constructor parameter as write-only: forward it to `base(...)` and never touch it again.
+
+## "OptionsValidationException: SingletonJobOptions.ProjectName must be set"
+
+You called `services.AddSingletonJobs(...)` without supplying a `ProjectName`. The library deliberately ships **no default** for this value: a shared default would let two unrelated deployments sharing the same Redis instance silently collide on lock keys like `default:heartbeat:lock`.
+
+Set it in any of:
+
+```json
+// appsettings.json
+{
+  "SingletonJob": {
+    "ProjectName": "myapp"
+  }
+}
+```
+
+```sh
+# environment variable
+SingletonJob__ProjectName=myapp
+```
+
+```csharp
+// programmatic
+services.PostConfigure<SingletonJobOptions>(o => o.ProjectName = "myapp");
+```
+
+The check is wired through `IValidateOptions<SingletonJobOptions>` and triggered by a tiny `IHostedService` that runs first, so a missing value fails at host startup rather than at the first job tick. Per-job overrides (`PostConfigureSingletonJob("name", ...)`) that clear `ProjectName` are caught when the affected job starts, with the message prefixed by `[Job: name]`.
 
 ## "I want to override `LockExpiry` for one job only"
 
