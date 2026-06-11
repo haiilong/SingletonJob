@@ -35,7 +35,8 @@ public static class ServiceCollectionExtensions
             var section = configuration.GetSection(SingletonJobOptions.SectionName);
             // Use Action<T> overloads (AOT-safe) and bind manually rather than the reflection-based
             // ConfigurationBinder.Bind. Keeps the lib trimming- and NativeAOT-clean.
-            services.Configure<SingletonJobOptions>(o => BindFromSection(section, o));
+            // ConfigureAll applies to every named instance including the default one, so a separate
+            // Configure<T> call for the default name would just run the same binding twice.
             services.ConfigureAll<SingletonJobOptions>(o => BindFromSection(section, o));
         }
         else

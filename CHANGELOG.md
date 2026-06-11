@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- **`ConfigureSingletonJobOptions` no longer binds the default options instance twice.** `ConfigureAll` already applies to every named instance including the default, so the extra `Configure` registration only repeated the same work. Behavior is unchanged.
 - **Lua scripts are sent as `EVALSHA` with precomputed hashes, with an automatic `EVAL` fallback on `NOSCRIPT`** (first use, or a Redis restart/failover that flushed the script cache). The script key and argument arrays are also cached per job instead of being allocated on every heartbeat.
 - **Leadership acquire and renew are now one atomic Lua script, halving the steady-state leader's Redis round trips.** Previously every heartbeat from the leader issued a `SET NX` (which failed because the key exists) followed by a separate renew script. The combined script takes the lock if free, extends the TTL if this node owns it, and returns whether the node holds the lock.
 
