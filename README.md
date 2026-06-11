@@ -113,8 +113,8 @@ That's it. Deploy N replicas. Exactly one runs the job.
 ## How it works
 
 1. Each replica derives `_lockKey = "{ProjectName}:{JobName}:lock"` and a unique `_nodeId`.
-2. Every `HeartbeatInterval` (default 3 s), each replica issues a Redis `SET key value NX PX <LockExpiry>`. The first one wins and becomes leader.
-3. The leader renews the TTL with an atomic Lua script (`GET == nodeId ? PEXPIRE : 0`) so only the holder can extend it.
+2. Every `HeartbeatInterval` (default 3 s), each replica runs one atomic Lua script: acquire the lock with `PX <LockExpiry>` if it is free, renew the TTL if this node already holds it. The first one wins and becomes leader; only the holder can extend the TTL.
+3. Followers get `0` back and stay followers, retrying on the next heartbeat.
 4. The job loop checks `IsLeader` each iteration and only runs work if true.
 5. On graceful shutdown the leader runs an atomic release Lua script (`GET == nodeId ? DEL : 0`). This enables **fast failover**: the next replica acquires the lock within `HeartbeatInterval` instead of waiting `LockExpiry` for it to expire.
 6. On hard kill (SIGKILL, OOM), the lock simply expires after `LockExpiry`.

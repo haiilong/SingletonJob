@@ -9,29 +9,26 @@
 
 Each job class produces one lock key. Each replica generates one `NodeId` per process. `NodeId = (Options.NodeId ?? POD_NAME ?? MachineName) + "-" + Guid8`.
 
-## Acquisition (`SETNX`)
+## Acquire or renew (Lua, atomic)
 
-Every `HeartbeatInterval` each replica issues:
-
-```redis
-SET {lockKey} {nodeId} NX PX {LockExpiry}
-```
-
-The first replica to issue this wins and becomes leader. The others get `null` back and stay followers.
-
-## Renewal (Lua, atomic)
-
-Once leader, the same loop renews the TTL using a Lua script that only succeeds if the lock value still matches our `NodeId`:
+Every `HeartbeatInterval` each replica runs one Lua script that acquires the lock if it is free, or extends the TTL if this node already owns it:
 
 ```lua
-if redis.call('GET', KEYS[1]) == ARGV[1] then
-    return redis.call('PEXPIRE', KEYS[1], ARGV[2])
+local v = redis.call('GET', KEYS[1])
+if not v then
+    redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
+    return 1
+elseif v == ARGV[1] then
+    redis.call('PEXPIRE', KEYS[1], ARGV[2])
+    return 1
 else
     return 0
 end
 ```
 
-If the script returns 0 the leader drops `IsLeader`. It was preempted, presumably because too many renewals were missed and the lock expired before another node acquired it.
+`ARGV[1]` is the node id, `ARGV[2]` is `LockExpiry` in milliseconds. The first replica to run it against a free key wins and becomes leader; for the steady-state leader every heartbeat is a single round trip that renews the TTL. Followers get 0 back and stay followers.
+
+If the script returns 0 for a node that thought it was leader, it drops `IsLeader`. It was preempted, presumably because too many renewals were missed and the lock expired before another node acquired it.
 
 ## Self-fencing on missed renewals
 

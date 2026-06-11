@@ -62,9 +62,14 @@ public abstract class SingletonBackgroundJob : BackgroundService
     // example, multi-replica simulations in tests) stay allowed.
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Type> RegisteredLockKeys = new();
 
-    // Atomic renew: extend lock TTL only if we still own it.
-    private const string RenewScript =
-        "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('PEXPIRE', KEYS[1], ARGV[2]) else return 0 end";
+    // Atomic acquire-or-renew: take the lock if it is free, extend the TTL if this node already owns it.
+    // One round trip per heartbeat instead of a failed SETNX followed by a separate renew script.
+    // Returns 1 when this node holds the lock after the call, 0 when another node does.
+    private const string AcquireOrRenewScript =
+        "local v = redis.call('GET', KEYS[1]) " +
+        "if not v then redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2]) return 1 " +
+        "elseif v == ARGV[1] then redis.call('PEXPIRE', KEYS[1], ARGV[2]) return 1 " +
+        "else return 0 end";
 
     // Atomic release: delete lock only if we own it.
     private const string ReleaseScript =
@@ -320,10 +325,15 @@ public abstract class SingletonBackgroundJob : BackgroundService
         var leaseStart = Environment.TickCount64;
         var leaseMs = (long)_options.LockExpiry.TotalMilliseconds;
 
-        // Attempt to acquire if we don't currently hold leadership.
-        var acquired = await _db!.StringSetAsync(_lockKey!, _nodeId, _options.LockExpiry, When.NotExists).ConfigureAwait(false);
+        var result = await _db!.ScriptEvaluateAsync(
+            AcquireOrRenewScript,
+            [_lockKey!],
+            [_nodeId!, leaseMs]
+        ).ConfigureAwait(false);
 
-        if (acquired)
+        var holdsLock = !result.IsNull && (long)result == 1;
+
+        if (holdsLock)
         {
             Volatile.Write(ref _leaseValidUntil, leaseStart + leaseMs);
             if (!Volatile.Read(ref _isLeader))
@@ -331,27 +341,11 @@ public abstract class SingletonBackgroundJob : BackgroundService
                 Volatile.Write(ref _isLeader, true);
                 Logger.LogInformation("Node {NodeId} became LEADER for {LockKey}", _nodeId, _lockKey);
             }
-            return;
         }
-
-        // We didn't acquire. If we previously held the lock, try to renew.
-        if (Volatile.Read(ref _isLeader))
+        else if (Volatile.Read(ref _isLeader))
         {
-            var result = await _db.ScriptEvaluateAsync(
-                RenewScript,
-                [_lockKey!],
-                [_nodeId!, leaseMs]
-            ).ConfigureAwait(false);
-
-            if (!result.IsNull && (long)result == 0)
-            {
-                Volatile.Write(ref _isLeader, false);
-                Logger.LogWarning("Node {NodeId} lost leadership for {LockKey}", _nodeId, _lockKey);
-            }
-            else
-            {
-                Volatile.Write(ref _leaseValidUntil, leaseStart + leaseMs);
-            }
+            Volatile.Write(ref _isLeader, false);
+            Logger.LogWarning("Node {NodeId} lost leadership for {LockKey}", _nodeId, _lockKey);
         }
     }
 

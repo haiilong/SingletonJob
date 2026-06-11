@@ -16,6 +16,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **A leader with a still-valid lease no longer backs off exponentially on Redis errors.** With the recommended settings two doubled delays already exceed `LockExpiry`, so any two consecutive hiccups used to forfeit the lock. The leader now retries at the plain `HeartbeatInterval` while its lease is valid; exponential backoff with jitter still applies to followers and to a demoted ex-leader.
 - **Split-brain on Redis partition: a leader that cannot reach Redis now demotes itself once `LockExpiry` elapses without a successful renewal.** Previously `IsLeader` stayed true while heartbeats failed, so a node partitioned from Redis kept executing its job while a peer acquired the expired lock and ran it too. The lease deadline is computed from a timestamp taken before each acquire/renew call, making the local fence at least as strict as the server-side TTL.
 
+### Changed
+
+- **Leadership acquire and renew are now one atomic Lua script, halving the steady-state leader's Redis round trips.** Previously every heartbeat from the leader issued a `SET NX` (which failed because the key exists) followed by a separate renew script. The combined script takes the lock if free, extends the TTL if this node owns it, and returns whether the node holds the lock.
+
 ### Added
 
 - **Job enable/disable.**
