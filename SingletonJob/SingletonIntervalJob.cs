@@ -12,7 +12,10 @@ namespace SingletonJob;
 /// </summary>
 public abstract class SingletonIntervalJob : SingletonBackgroundJob
 {
-    /// <summary>Implement to return the wait time between iterations.</summary>
+    /// <summary>
+    /// Implement to return the wait time between iterations. Re-read after every iteration, so a dynamic
+    /// value takes effect on the next wait. Must be positive and at most 49.7 days.
+    /// </summary>
     protected abstract TimeSpan GetJobInterval();
 
     /// <inheritdoc />
@@ -52,7 +55,7 @@ public abstract class SingletonIntervalJob : SingletonBackgroundJob
 
             try
             {
-                await Task.Delay(GetJobInterval(), stoppingToken).ConfigureAwait(false);
+                await Task.Delay(ValidateJobInterval(GetJobInterval(), JobName), stoppingToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {

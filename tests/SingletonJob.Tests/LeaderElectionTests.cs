@@ -62,6 +62,43 @@ public class LeaderElectionTests(RedisFixture fx)
     }
 
     [Fact]
+    public async Task Invalid_interval_fails_fast_with_job_name_in_message()
+    {
+        await using var redis = await fx.ConnectAsync();
+        var job = new CountingIntervalJob(redis, Opts(Guid.NewGuid().ToString("N")),
+            NullLogger<CountingIntervalJob>.Instance,
+            TimeSpan.Zero, "badinterval");
+
+        using var cts = new CancellationTokenSource();
+        Exception? startupFailure = null;
+        try
+        {
+            await job.StartAsync(cts.Token);
+        }
+        catch (InvalidOperationException ex)
+        {
+            // ExecuteAsync can fault before StartAsync returns, in which case the host surfaces it here.
+            startupFailure = ex;
+        }
+
+        if (startupFailure is null)
+        {
+            var deadline = Environment.TickCount64 + 5000;
+            while (job.ExecuteTask is { IsCompleted: false } && Environment.TickCount64 < deadline)
+                await Task.Delay(50);
+
+            job.ExecuteTask!.IsFaulted.Should().BeTrue("a non-positive interval must fail the job, not hang it");
+            startupFailure = job.ExecuteTask.Exception!.GetBaseException();
+        }
+
+        startupFailure.Should().BeOfType<InvalidOperationException>()
+            .Which.Message.Should().Contain("badinterval");
+
+        await cts.CancelAsync();
+        await job.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
     public async Task Leader_self_demotes_when_redis_is_unreachable()
     {
         await using var redis = await fx.ConnectAsync();

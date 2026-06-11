@@ -42,7 +42,8 @@ public abstract class SingletonCronJob : SingletonBackgroundJob
     /// <inheritdoc />
     protected override async Task ExecuteJobLoopAsync(CancellationToken stoppingToken)
     {
-        var expr = GetCronExpression();
+        var expr = GetCronExpression()
+            ?? throw new InvalidOperationException($"Job '{JobName}': GetCronExpression() returned null.");
 
         // Track the pivot for the next-occurrence lookup so the loop strictly advances even if Cronos
         // returns a value at or before the pivot for second-precision expressions like "* * * * * *".

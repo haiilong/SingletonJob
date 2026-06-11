@@ -15,7 +15,11 @@ public abstract class SingletonFixedRateJob : SingletonBackgroundJob
     private volatile bool _isJobRunning;
     private Task? _currentRun;
 
-    /// <summary>Implement to return the period between ticks.</summary>
+    /// <summary>
+    /// Implement to return the period between ticks. Read once when the job starts (the
+    /// <see cref="PeriodicTimer"/> is created with it), so later changes have no effect.
+    /// Must be positive and at most 49.7 days.
+    /// </summary>
     protected abstract TimeSpan GetJobInterval();
 
     /// <inheritdoc />
@@ -30,7 +34,7 @@ public abstract class SingletonFixedRateJob : SingletonBackgroundJob
     /// <inheritdoc />
     protected override async Task ExecuteJobLoopAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(GetJobInterval());
+        using var timer = new PeriodicTimer(ValidateJobInterval(GetJobInterval(), JobName));
 
         try
         {

@@ -125,7 +125,12 @@ public abstract class SingletonBackgroundJob : BackgroundService
             return;
         }
 
-        var electionTask = RunLeaderElectionLoopAsync(stoppingToken);
+        // Linked so the election loop also stops when the job loop exits for any non-shutdown reason
+        // (invalid configuration, an exception escaping the loop, a cron schedule with no future
+        // occurrences). Without this the finally below would await the election loop until host shutdown,
+        // keeping the lock alive and the failure invisible while no work runs.
+        using var electionCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        var electionTask = RunLeaderElectionLoopAsync(electionCts.Token);
 
         try
         {
@@ -133,13 +138,29 @@ public abstract class SingletonBackgroundJob : BackgroundService
         }
         finally
         {
-            // Wait for the heartbeat loop to drain so we don't release the lock and then race with a renewal.
+            // Stop the heartbeat loop and wait for it to drain so we don't release the lock and then race
+            // with a renewal.
+            electionCts.Cancel();
             try { await electionTask.ConfigureAwait(false); } catch { /* swallow, already logged in loop */ }
 
             // Releasing on graceful shutdown enables fast failover: peers can SETNX immediately instead of
             // waiting up to LockExpiry. Important for k8s rolling deploys where SIGTERM is followed by quick replacement.
             await ReleaseLockAsync().ConfigureAwait(false);
         }
+    }
+
+    // Shared guard for the interval-returning shapes. Task.Delay and PeriodicTimer both reject values
+    // outside (0, uint.MaxValue - 1 ms]; fail with a message that names the job instead of surfacing a
+    // bare ArgumentOutOfRangeException from deep inside the loop.
+    internal static TimeSpan ValidateJobInterval(TimeSpan interval, string jobName)
+    {
+        if (interval <= TimeSpan.Zero || interval.TotalMilliseconds > 4294967294)
+        {
+            throw new InvalidOperationException(
+                $"Job '{jobName}': GetJobInterval() returned {interval}. " +
+                "The interval must be positive and at most 49.7 days (uint.MaxValue - 1 milliseconds).");
+        }
+        return interval;
     }
 
     /// <summary>Implemented by job-shape classes (interval, fixed-rate, cron) to define the execution loop.</summary>
