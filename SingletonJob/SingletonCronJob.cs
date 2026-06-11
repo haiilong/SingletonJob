@@ -19,6 +19,11 @@ namespace SingletonJob;
 /// </remarks>
 public abstract class SingletonCronJob : SingletonBackgroundJob
 {
+    // Task.Delay rejects anything above uint.MaxValue - 1 milliseconds (~49.7 days), which a sparse cron
+    // (yearly, specific dates) easily exceeds. Sleeping in bounded chunks and recomputing the remaining
+    // time also keeps the wake-up accurate if the system clock is adjusted during a long sleep.
+    private static readonly TimeSpan MaxSleepChunk = TimeSpan.FromDays(1);
+
     /// <summary>Implement to return the parsed cron expression. Use <see cref="CronExpression.Parse(string)"/>.</summary>
     protected abstract CronExpression GetCronExpression();
 
@@ -72,17 +77,18 @@ public abstract class SingletonCronJob : SingletonBackgroundJob
 
             pivot = next.Value;
 
-            var delay = next.Value - DateTimeOffset.UtcNow;
-            if (delay > TimeSpan.Zero)
+            try
             {
-                try
+                var delay = next.Value - DateTimeOffset.UtcNow;
+                while (delay > TimeSpan.Zero)
                 {
-                    await Task.Delay(delay, stoppingToken).ConfigureAwait(false);
+                    await Task.Delay(delay < MaxSleepChunk ? delay : MaxSleepChunk, stoppingToken).ConfigureAwait(false);
+                    delay = next.Value - DateTimeOffset.UtcNow;
                 }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
+            }
+            catch (OperationCanceledException)
+            {
+                break;
             }
 
             if (!IsLeader || !IsEnabled) continue;

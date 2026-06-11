@@ -36,6 +36,37 @@ public class CronJobTests(RedisFixture fx)
     }
 
     [Fact]
+    public async Task Far_future_occurrence_does_not_crash_the_job_loop()
+    {
+        await using var redis = await fx.ConnectAsync();
+        var opts = new StaticOptionsFactory<SingletonJobOptions>(new SingletonJobOptions
+        {
+            ProjectName = Guid.NewGuid().ToString("N"),
+            HeartbeatInterval = TimeSpan.FromMilliseconds(200),
+            LockExpiry = TimeSpan.FromSeconds(2),
+        });
+
+        // First of the month six months out: always 150+ days away, well past Task.Delay's ~49.7 day limit.
+        // The unfixed code threw ArgumentOutOfRangeException from Task.Delay and killed the job loop.
+        var month = DateTime.UtcNow.AddMonths(6).Month;
+        var expr = CronExpression.Parse($"0 0 1 {month} *");
+        var job = new CountingCronJob(redis, opts,
+            NullLogger<CountingCronJob>.Instance,
+            expr, "farfuture");
+
+        using var cts = new CancellationTokenSource();
+        await job.StartAsync(cts.Token);
+
+        await Task.Delay(1000, cts.Token);
+        await cts.CancelAsync();
+        await job.StopAsync(CancellationToken.None);
+
+        job.ExecuteTask.Should().NotBeNull();
+        job.ExecuteTask!.IsFaulted.Should().BeFalse("long sleeps must be chunked, not passed to Task.Delay whole");
+        job.RunCount.Should().Be(0);
+    }
+
+    [Fact]
     public async Task Slow_job_skips_missed_occurrences_instead_of_replaying()
     {
         await using var redis = await fx.ConnectAsync();
