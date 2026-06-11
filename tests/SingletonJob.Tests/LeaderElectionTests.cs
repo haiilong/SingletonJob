@@ -62,6 +62,42 @@ public class LeaderElectionTests(RedisFixture fx)
     }
 
     [Fact]
+    public async Task Leader_self_demotes_when_redis_is_unreachable()
+    {
+        await using var redis = await fx.ConnectAsync();
+        var opts = new StaticOptionsFactory<SingletonJobOptions>(new SingletonJobOptions
+        {
+            ProjectName = Guid.NewGuid().ToString("N"),
+            HeartbeatInterval = TimeSpan.FromMilliseconds(200),
+            LockExpiry = TimeSpan.FromMilliseconds(800),
+        });
+        var job = new CountingIntervalJob(redis, opts,
+            NullLogger<CountingIntervalJob>.Instance,
+            TimeSpan.FromMilliseconds(50), "fence");
+
+        using var cts = new CancellationTokenSource();
+        await job.StartAsync(cts.Token);
+
+        var deadline = Environment.TickCount64 + 5000;
+        while (job.RunCount == 0 && Environment.TickCount64 < deadline)
+            await Task.Delay(50, cts.Token);
+        job.RunCount.Should().BeGreaterThan(0, "the job should become leader and run first");
+
+        // Sever connectivity. Heartbeats now throw, so the lease can no longer be renewed.
+        await redis.CloseAsync();
+
+        // Wait past LockExpiry (plus slack for an in-flight iteration); the node must self-demote.
+        await Task.Delay(1500);
+        var afterFence = job.RunCount;
+        await Task.Delay(600);
+        job.RunCount.Should().Be(afterFence,
+            "a leader that cannot renew within LockExpiry must stop executing (self-fencing)");
+
+        await cts.CancelAsync();
+        await job.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
     public async Task Killing_leader_promotes_follower()
     {
         await using var redis = await fx.ConnectAsync();

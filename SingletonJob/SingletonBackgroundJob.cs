@@ -32,8 +32,20 @@ public abstract class SingletonBackgroundJob : BackgroundService
     private bool _isLeader;
     private bool _isEnabled = true;
 
-    /// <summary>True when this node currently holds the Redis leadership lock.</summary>
-    protected bool IsLeader => Volatile.Read(ref _isLeader);
+    // Lease deadline in Environment.TickCount64 milliseconds. Set on every successful acquire/renew from a
+    // timestamp taken BEFORE the Redis call, so the local fence is always at least as strict as the
+    // server-side TTL (the server applies the TTL at some point after we took the timestamp).
+    private long _leaseValidUntil;
+
+    /// <summary>
+    /// True when this node currently holds the Redis leadership lock and the lease confirmed by the last
+    /// successful acquire/renew has not yet expired. If renewals fail (for example, Redis is unreachable
+    /// from this node only), this turns false once <see cref="SingletonJobOptions.LockExpiry"/> has elapsed
+    /// since the last successful call: at that point the key has expired server-side and a peer may already
+    /// own the lock, so this node self-demotes rather than risk duplicate execution.
+    /// </summary>
+    protected bool IsLeader =>
+        Volatile.Read(ref _isLeader) && Environment.TickCount64 < Volatile.Read(ref _leaseValidUntil);
 
     /// <summary>
     /// True when the job is currently enabled, as last observed by the election loop. Refreshed once per
@@ -237,11 +249,26 @@ public abstract class SingletonBackgroundJob : BackgroundService
 
     private async Task MaintainLeadershipAsync()
     {
+        // Self-fence: if the lease window lapsed without a successful renewal, the key has expired on the
+        // server and a peer may already own it. IsLeader already reports false; clear the raw flag too so
+        // a successful SETNX below logs the "became LEADER" transition correctly.
+        if (Volatile.Read(ref _isLeader) && Environment.TickCount64 >= Volatile.Read(ref _leaseValidUntil))
+        {
+            Volatile.Write(ref _isLeader, false);
+            Logger.LogWarning(
+                "Node {NodeId} could not renew {LockKey} within LockExpiry. Lease expired, demoting to follower.",
+                _nodeId, _lockKey);
+        }
+
+        var leaseStart = Environment.TickCount64;
+        var leaseMs = (long)_options.LockExpiry.TotalMilliseconds;
+
         // Attempt to acquire if we don't currently hold leadership.
         var acquired = await _db!.StringSetAsync(_lockKey!, _nodeId, _options.LockExpiry, When.NotExists).ConfigureAwait(false);
 
         if (acquired)
         {
+            Volatile.Write(ref _leaseValidUntil, leaseStart + leaseMs);
             if (!Volatile.Read(ref _isLeader))
             {
                 Volatile.Write(ref _isLeader, true);
@@ -256,13 +283,17 @@ public abstract class SingletonBackgroundJob : BackgroundService
             var result = await _db.ScriptEvaluateAsync(
                 RenewScript,
                 [_lockKey!],
-                [_nodeId!, (long)_options.LockExpiry.TotalMilliseconds]
+                [_nodeId!, leaseMs]
             ).ConfigureAwait(false);
 
             if (!result.IsNull && (long)result == 0)
             {
                 Volatile.Write(ref _isLeader, false);
                 Logger.LogWarning("Node {NodeId} lost leadership for {LockKey}", _nodeId, _lockKey);
+            }
+            else
+            {
+                Volatile.Write(ref _leaseValidUntil, leaseStart + leaseMs);
             }
         }
     }

@@ -33,6 +33,10 @@ end
 
 If the script returns 0 the leader drops `IsLeader`. It was preempted, presumably because too many renewals were missed and the lock expired before another node acquired it.
 
+## Self-fencing on missed renewals
+
+The renewal path above only detects preemption when Redis is reachable. To cover the partition case (only this node loses Redis connectivity, the key expires server-side, a peer takes over), the leader also fences itself locally. Every successful acquire/renew records a lease deadline: a timestamp taken before the Redis call plus `LockExpiry`. `IsLeader` returns false once that deadline passes without another successful renewal, so the job loop stops executing even while the election loop is still failing and backing off. Taking the timestamp before the call makes the local fence at least as strict as the server-side TTL.
+
 ## Release on graceful shutdown (Lua, atomic)
 
 ```lua
