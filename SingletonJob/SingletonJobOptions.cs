@@ -43,7 +43,9 @@ public class SingletonJobOptions
     /// <summary>
     /// On consecutive Redis errors the heartbeat delay doubles each time (exponential backoff), capped at
     /// this absolute ceiling. Each delay also has ±20% jitter applied to avoid thundering-herd reconnects
-    /// when Redis recovers. Default 30 seconds.
+    /// when Redis recovers. Default 30 seconds. Only applies while the node is a follower: a leader whose
+    /// lease is still valid retries at the plain <see cref="HeartbeatInterval"/>, since backing off would
+    /// forfeit the lock before the next attempt.
     /// </summary>
     public TimeSpan MaxBackoffDelay { get; set; } = TimeSpan.FromSeconds(30);
 

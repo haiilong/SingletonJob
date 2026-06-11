@@ -202,21 +202,33 @@ public abstract class SingletonBackgroundJob : BackgroundService
         }
     }
 
-    private TimeSpan NextHeartbeatDelay(int consecutiveFailures)
+    private TimeSpan NextHeartbeatDelay(int consecutiveFailures) =>
+        ComputeHeartbeatDelay(_options, consecutiveFailures, IsLeader);
+
+    // Static and pure so it can be unit tested without a Redis connection.
+    internal static TimeSpan ComputeHeartbeatDelay(
+        SingletonJobOptions options, int consecutiveFailures, bool isLeaderWithValidLease)
     {
-        if (consecutiveFailures == 0) return _options.HeartbeatInterval;
+        if (consecutiveFailures == 0) return options.HeartbeatInterval;
+
+        // A leader whose lease is still valid must not back off: with the recommended settings
+        // (LockExpiry >= 3 x HeartbeatInterval) two doubled delays already exceed LockExpiry, so backing
+        // off would forfeit the lock on any two consecutive hiccups. Retry at the plain heartbeat cadence
+        // to renew before the TTL lapses. Once the lease expires the node self-demotes and the follower
+        // backoff below takes over.
+        if (isLeaderWithValidLease) return options.HeartbeatInterval;
 
         // Exponential backoff: HeartbeatInterval * 2^failures, capped at MaxBackoffDelay.
         var shift = Math.Min(consecutiveFailures, 30);
-        var scaledTicks = _options.HeartbeatInterval.Ticks * (1L << shift);
-        if (scaledTicks < 0 || scaledTicks > _options.MaxBackoffDelay.Ticks)
-            scaledTicks = _options.MaxBackoffDelay.Ticks;
+        var scaledTicks = options.HeartbeatInterval.Ticks * (1L << shift);
+        if (scaledTicks < 0 || scaledTicks > options.MaxBackoffDelay.Ticks)
+            scaledTicks = options.MaxBackoffDelay.Ticks;
         var baseDelay = TimeSpan.FromTicks(scaledTicks);
 
         // ±20% jitter so peers don't reconnect in lockstep.
         var jitterFraction = Random.Shared.NextDouble() * 0.4 - 0.2;
         var jitterTicks = (long)(baseDelay.Ticks * jitterFraction);
-        return TimeSpan.FromTicks(Math.Max(baseDelay.Ticks + jitterTicks, _options.HeartbeatInterval.Ticks));
+        return TimeSpan.FromTicks(Math.Max(baseDelay.Ticks + jitterTicks, options.HeartbeatInterval.Ticks));
     }
 
     private async ValueTask<bool> EvaluateEnabledAsync(CancellationToken stoppingToken)
