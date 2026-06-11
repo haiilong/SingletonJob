@@ -56,6 +56,12 @@ public abstract class SingletonBackgroundJob : BackgroundService
     /// <summary>The configured options for this job (resolved on <see cref="StartAsync"/>).</summary>
     protected SingletonJobOptions Options => _options;
 
+    // Process-wide registry of lock keys, used to catch two different job classes sharing a JobName.
+    // Without the check both classes silently contend for the same lock and only one of them ever runs.
+    // Keyed by lock key and storing the concrete type so multiple instances of the SAME class (for
+    // example, multi-replica simulations in tests) stay allowed.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Type> RegisteredLockKeys = new();
+
     // Atomic renew: extend lock TTL only if we still own it.
     private const string RenewScript =
         "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('PEXPIRE', KEYS[1], ARGV[2]) else return 0 end";
@@ -88,8 +94,26 @@ public abstract class SingletonBackgroundJob : BackgroundService
         _nodeId = ResolveNodeId(_options);
         _lockKey = $"{_options.ProjectName}:{JobName}:lock";
 
+        var owner = RegisteredLockKeys.GetOrAdd(_lockKey, GetType());
+        if (owner != GetType())
+        {
+            throw new InvalidOperationException(
+                $"Duplicate job name: '{JobName}' (lock key '{_lockKey}') is used by both " +
+                $"{owner.FullName} and {GetType().FullName}. Each job class must have a unique JobName; " +
+                "with a shared name the two jobs silently contend for the same lock and only one of them runs.");
+        }
+
         Logger.LogInformation("SingletonJob started: {LockKey}. Node: {NodeId}", _lockKey, _nodeId);
         return base.StartAsync(cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public override void Dispose()
+    {
+        if (_lockKey is not null)
+            RegisteredLockKeys.TryRemove(new KeyValuePair<string, Type>(_lockKey, GetType()));
+        base.Dispose();
+        GC.SuppressFinalize(this);
     }
 
     private static string ResolveNodeId(SingletonJobOptions options)

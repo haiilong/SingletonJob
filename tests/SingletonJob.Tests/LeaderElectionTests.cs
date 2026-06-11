@@ -62,6 +62,28 @@ public class LeaderElectionTests(RedisFixture fx)
     }
 
     [Fact]
+    public async Task Duplicate_job_name_across_different_classes_throws_at_startup()
+    {
+        await using var redis = await fx.ConnectAsync();
+        var project = Guid.NewGuid().ToString("N");
+        var jobA = new CountingIntervalJob(redis, Opts(project),
+            NullLogger<CountingIntervalJob>.Instance,
+            TimeSpan.FromMilliseconds(100), "dup");
+        var jobB = new ToggleableIntervalJob(redis, Opts(project),
+            NullLogger<ToggleableIntervalJob>.Instance,
+            TimeSpan.FromMilliseconds(100), "dup");
+
+        using var cts = new CancellationTokenSource();
+        await jobA.StartAsync(cts.Token);
+
+        var act = () => jobB.StartAsync(cts.Token);
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*dup*");
+
+        await cts.CancelAsync();
+        await jobA.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
     public async Task Invalid_interval_fails_fast_with_job_name_in_message()
     {
         await using var redis = await fx.ConnectAsync();
