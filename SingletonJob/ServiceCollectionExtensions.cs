@@ -67,6 +67,8 @@ public static class ServiceCollectionExtensions
         if (TimeSpan.TryParse(section["MaxBackoffDelay"], out var mbd)) o.MaxBackoffDelay = mbd;
 
         if (bool.TryParse(section["Enabled"], out var enabled)) o.Enabled = enabled;
+
+        if (bool.TryParse(section["CancelOnLostLeadership"], out var col)) o.CancelOnLostLeadership = col;
     }
 
     /// <summary>

@@ -54,6 +54,44 @@ internal sealed class ToggleableIntervalJob(
     }
 }
 
+// Blocks inside ExecuteJobAsync until its token fires; used to observe CancelOnLostLeadership behavior.
+internal sealed class BlockingIntervalJob(
+    IConnectionMultiplexer redis,
+    IOptionsFactory<SingletonJobOptions> options,
+    ILogger<BlockingIntervalJob> logger,
+    string jobName)
+    : SingletonIntervalJob(redis, options, logger)
+{
+    public int StartedCount;
+    public volatile bool IterationCancelled;
+    private volatile bool _enabled = true;
+
+    public bool Enabled
+    {
+        get => _enabled;
+        set => _enabled = value;
+    }
+
+    public override string JobName { get; } = jobName;
+    protected override TimeSpan GetJobInterval() => TimeSpan.FromMilliseconds(100);
+
+    protected override ValueTask<bool> IsJobEnabledAsync(CancellationToken cancellationToken) => new(_enabled);
+
+    protected override async Task ExecuteJobAsync(CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref StartedCount);
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(30), cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            IterationCancelled = true;
+            throw;
+        }
+    }
+}
+
 internal sealed class CountingFixedRateJob(
     IConnectionMultiplexer redis,
     IOptionsFactory<SingletonJobOptions> options,

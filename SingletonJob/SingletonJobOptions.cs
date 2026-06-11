@@ -50,6 +50,15 @@ public class SingletonJobOptions
     public TimeSpan MaxBackoffDelay { get; set; } = TimeSpan.FromSeconds(30);
 
     /// <summary>
+    /// When true, the <see cref="CancellationToken"/> passed to a job iteration also fires when this node
+    /// loses leadership while the iteration is in flight (lease expiry, preemption, live disable, graceful
+    /// shutdown). This shrinks the window where two nodes can run the same job concurrently, provided the
+    /// job honors its token. When false (the default, matching 1.0 behavior) a started iteration only
+    /// observes host shutdown and otherwise runs to completion.
+    /// </summary>
+    public bool CancelOnLostLeadership { get; set; }
+
+    /// <summary>
     /// Hard kill switch, evaluated once at startup. When false the job neither executes nor participates in
     /// leader election; the hosted service starts and immediately idles. Set <c>"Enabled": false</c> in the
     /// <c>SingletonJob</c> config section to disable every job in the project, or per job via

@@ -107,11 +107,15 @@ public abstract class SingletonCronJob : SingletonBackgroundJob
             var startTs = TimeProvider.GetTimestamp();
             try
             {
-                await ExecuteJobAsync(stoppingToken).ConfigureAwait(false);
+                await ExecuteIterationAsync(stoppingToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 break;
+            }
+            catch (OperationCanceledException)
+            {
+                Logger.LogInformation("Job {JobName} iteration cancelled after leadership was lost.", JobName);
             }
             catch (Exception ex)
             {

@@ -10,6 +10,7 @@
 | `NodeId` | `string?` | `null` | Override identifier. When null, falls back to env `POD_NAME` then `Environment.MachineName`. An 8-char random suffix is always appended. |
 | `MaxBackoffDelay` | `TimeSpan` | `00:00:30` | Ceiling on the exponential backoff delay applied between heartbeats when Redis throws. Must be `>= HeartbeatInterval`. |
 | `Enabled` | `bool` | `true` | Static kill switch, evaluated once at startup. When `false` the job never executes and never participates in leader election. For live toggling see [Disabling jobs](#disabling-jobs). |
+| `CancelOnLostLeadership` | `bool` | `false` | When `true`, the token passed to `ExecuteJobAsync` also fires if this node loses leadership mid-iteration (lease expiry, preemption, live disable, shutdown). Shrinks the duplicate-execution window, provided your job honors its token. Default `false` keeps the 1.0 behavior: a started iteration runs to completion. |
 
 `appsettings.json`:
 

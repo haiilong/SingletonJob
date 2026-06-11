@@ -76,11 +76,15 @@ public abstract class SingletonFixedRateJob : SingletonBackgroundJob
         var startTs = TimeProvider.GetTimestamp();
         try
         {
-            await ExecuteJobAsync(cancellationToken).ConfigureAwait(false);
+            await ExecuteIterationAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            // graceful
+            // graceful shutdown
+        }
+        catch (OperationCanceledException)
+        {
+            Logger.LogInformation("Job {JobName} iteration cancelled after leadership was lost.", JobName);
         }
         catch (Exception ex)
         {

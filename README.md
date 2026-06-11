@@ -149,6 +149,7 @@ Per-iteration noise is at Debug on purpose. High-frequency jobs would otherwise 
 | `NodeId`               | `null`      | Override identifier. Falls back to env `POD_NAME`, then `MachineName`.   |
 | `MaxBackoffDelay`      | `00:00:30`  | Ceiling on the exponential backoff delay between Redis error retries.    |
 | `Enabled`              | `true`      | Static kill switch. `false` = job never runs or competes for the lock.  |
+| `CancelOnLostLeadership` | `false`   | Fire the iteration's token when leadership is lost mid-run.             |
 
 Validation runs on `StartAsync`; bad config throws. See [docs/configuration.md](docs/configuration.md) for per-job overrides.
 
@@ -204,7 +205,6 @@ docker compose up --build --scale worker=3
 - Built-in `IHealthCheck` so Kubernetes readiness probes can detect a wedged election loop.
 - Metrics via `System.Diagnostics.Metrics` (counters for ticks, dropped ticks, leadership flips, durations).
 - `ActivitySource` tracing per iteration for distributed tracing.
-- Configurable cancellation on lost leadership (today: started iterations always run to completion).
 - SQL Server / PostgreSQL backends. (Not on near roadmap. Redis remains the supported backend.)
 
 ## License

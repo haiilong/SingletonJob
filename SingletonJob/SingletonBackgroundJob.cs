@@ -41,6 +41,11 @@ public abstract class SingletonBackgroundJob : BackgroundService
     private bool _isLeader;
     private bool _isEnabled = true;
 
+    // One source per leadership term, created on promotion and cancelled on every demotion path (lost
+    // lock, lease expiry, live disable, release on shutdown). Cancelled but never disposed: an in-flight
+    // iteration may still hold a linked source over the token, and a CTS without timers needs no disposal.
+    private CancellationTokenSource? _termCts;
+
     // Timestamp (TimeProvider.GetTimestamp) of the last successful acquire/renew, taken BEFORE the Redis
     // call so the local lease is always at least as strict as the server-side TTL (the server applies the
     // TTL at some point after the timestamp was taken).
@@ -237,6 +242,25 @@ public abstract class SingletonBackgroundJob : BackgroundService
     /// <summary>Implemented by job-shape classes (interval, fixed-rate, cron) to define the execution loop.</summary>
     protected abstract Task ExecuteJobLoopAsync(CancellationToken stoppingToken);
 
+    // Runs one iteration of user work. With CancelOnLostLeadership enabled, the token handed to
+    // ExecuteJobAsync also fires when this node's leadership term ends mid-iteration.
+    private protected async Task ExecuteIterationAsync(CancellationToken stoppingToken)
+    {
+        if (!_options.CancelOnLostLeadership)
+        {
+            await ExecuteJobAsync(stoppingToken).ConfigureAwait(false);
+            return;
+        }
+
+        // Snapshot: the election loop may rotate the term concurrently. A term that ended between the
+        // caller's IsLeader check and here means the linked token is already cancelled, which is correct.
+        var term = Volatile.Read(ref _termCts);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, term?.Token ?? default);
+        await ExecuteJobAsync(linked.Token).ConfigureAwait(false);
+    }
+
+    private void EndLeadershipTerm() => Volatile.Read(ref _termCts)?.Cancel();
+
     /// <summary>
     /// Logs a warning if a single iteration of the job took longer than 80% of <see cref="SingletonJobOptions.LockExpiry"/>.
     /// When that happens duplicate execution becomes possible because the leader may not renew in time.
@@ -359,6 +383,7 @@ public abstract class SingletonBackgroundJob : BackgroundService
         if (Volatile.Read(ref _isLeader) && !LeaseIsValid)
         {
             Volatile.Write(ref _isLeader, false);
+            EndLeadershipTerm();
             Logger.LogWarning(
                 "Node {NodeId} could not renew {LockKey} within LockExpiry. Lease expired, demoting to follower.",
                 _nodeId, _lockKey);
@@ -376,6 +401,9 @@ public abstract class SingletonBackgroundJob : BackgroundService
             Volatile.Write(ref _leaseStartTimestamp, leaseStart);
             if (!Volatile.Read(ref _isLeader))
             {
+                // Publish the new term before the leader flag so any reader that observes IsLeader == true
+                // also observes the term source for this leadership term.
+                Volatile.Write(ref _termCts, new CancellationTokenSource());
                 Volatile.Write(ref _isLeader, true);
                 Logger.LogInformation("Node {NodeId} became LEADER for {LockKey}", _nodeId, _lockKey);
             }
@@ -383,6 +411,7 @@ public abstract class SingletonBackgroundJob : BackgroundService
         else if (Volatile.Read(ref _isLeader))
         {
             Volatile.Write(ref _isLeader, false);
+            EndLeadershipTerm();
             Logger.LogWarning("Node {NodeId} lost leadership for {LockKey}", _nodeId, _lockKey);
         }
     }
@@ -416,6 +445,7 @@ public abstract class SingletonBackgroundJob : BackgroundService
         }
 
         Volatile.Write(ref _isLeader, false);
+        EndLeadershipTerm();
         Logger.LogInformation("Leadership released for {LockKey}", _lockKey);
     }
 }
