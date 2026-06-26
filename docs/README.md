@@ -7,6 +7,7 @@ Quick links:
 | [getting-started.md](getting-started.md) | Install, first job, first multi-instance run |
 | [configuration.md](configuration.md) | Every option, per-job overrides, environment variables |
 | [architecture.md](architecture.md) | How leader election, renewal, and release work end-to-end |
+| [technical-decisions.md](technical-decisions.md) | Deep-dive into every interesting design choice and its trade-offs |
 | [aot.md](aot.md) | NativeAOT and trimming, source generator details |
 | [deployment-kubernetes.md](deployment-kubernetes.md) | Pod manifest, SIGTERM behavior, sizing |
 | [deployment-redis.md](deployment-redis.md) | Standalone, Sentinel, Cluster, Memurai on Windows |
