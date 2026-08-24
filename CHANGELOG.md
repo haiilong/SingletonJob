@@ -4,6 +4,16 @@ All notable changes to this project are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-08-24
+
+### Added
+
+- **Opt out of the long-execution warning** via `protected virtual bool WarnOnLongExecution` on `SingletonBackgroundJob` (default `true`, so existing jobs are unaffected). Override it to `false` for a job whose iteration is *meant* to be long-lived — a WebSocket session or another connection held open for hours inside a single `ExecuteJobAsync` — where the 80%-of-`LockExpiry` warning fires on every iteration and none of its advice can be acted on: no `LockExpiry` value exceeds hours, and "shorten the job" would mean abandoning the pattern. This is a supported shape, not a misuse: leadership is renewed by the election loop on its own task, independently of how long an iteration runs, so a multi-hour iteration keeps its lease throughout and opens no duplicate-execution window. Left on, the warning trains operators to ignore a message that is genuinely useful for interval, fixed-rate and cron jobs that have simply outgrown their lease headroom — which is why this is an opt-out on the job rather than a log filter in the consumer.
+
+### Changed
+
+- **The documentation on `WarnIfExecutionTimeTooLong` no longer claims a long iteration causes duplicate execution.** It asserted that "duplicate execution becomes possible because the leader may not renew in time", which contradicts the library's own design: renewal runs concurrently with the iteration, not between iterations, and has done since leader election was introduced. What the warning actually signals is a job slower than its schedule assumes — worth surfacing, but for a different reason than was documented. Behaviour is unchanged.
+
 ## [1.1.0] - 2026-06-11
 
 ### Fixed
