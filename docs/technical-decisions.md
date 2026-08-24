@@ -458,9 +458,13 @@ clock for each purpose is itself a decision.
   anything ≤0 or >~49.7 days with a bare `ArgumentOutOfRangeException` from deep in the loop. The
   guard fails early with a message that **names the job**, turning a cryptic stack trace into an
   actionable error.
-- **80%-of-LockExpiry warning** (`WarnIfExecutionTimeTooLong`, `:268-277`): if an iteration takes
-  >80% of `LockExpiry`, log a warning — that's the canary that the job is about to overrun its
-  lease and open a duplicate-execution window. Cheap early warning for the #1 misconfiguration.
+- **80%-of-LockExpiry warning** (`WarnIfExecutionTimeTooLong`): if an iteration takes >80% of
+  `LockExpiry`, log a warning — the canary that the job is slower than its schedule assumes and the
+  lease headroom was sized for work that no longer fits. Note what it is *not*: renewal runs on the
+  election loop concurrently with the iteration, so a long iteration does not by itself open a
+  duplicate-execution window. That is why `WarnOnLongExecution` exists — a job whose iteration is
+  deliberately a long-lived connection would otherwise warn every time, with advice it cannot act
+  on, and a warning that always fires is a warning nobody reads.
 - **Logging-level discipline** (`README.md:131-139`): per-iteration start/end is at `Debug`, not
   `Information`. A 500 ms job would otherwise emit 2 `Information` lines/sec/pod and flood logs.
   Lifecycle events (leader transitions, release) stay at `Information`.

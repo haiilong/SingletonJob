@@ -138,13 +138,55 @@ env:
 
 Logs become `Node my-app-7d4-x8k9 became LEADER for myapp:heartbeat:lock`. Instantly attributable to a single pod.
 
+## Long-lived iterations
+
+A job may legitimately spend its whole iteration inside one long-lived operation — holding a WebSocket
+open, draining a stream, keeping a subscription alive — so that a single `ExecuteJobAsync` runs for
+hours and `GetJobInterval()` serves as the reconnect delay rather than a schedule.
+
+This is a supported shape. Leadership is renewed by the election loop, which runs concurrently with
+your iteration on its own task, so the lease is held for as long as the iteration lasts and no
+duplicate-execution window opens. Pair it with `CancelOnLostLeadership = true` so losing the lease
+tears the connection down promptly instead of leaving a second one open elsewhere.
+
+What such a job *will* trip is the 80%-of-`LockExpiry` warning, on every single iteration, with advice
+it cannot act on: no `LockExpiry` value exceeds hours, and shortening the iteration would mean
+abandoning the design. Opt out on the job:
+
+```csharp
+public sealed class FeedJob(/* ... */) : SingletonIntervalJob(redis, options, logger)
+{
+    public override string JobName => "feed";
+
+    // One iteration is one connection held open for hours; its duration carries no signal.
+    protected override bool WarnOnLongExecution => false;
+
+    protected override TimeSpan GetJobInterval() => TimeSpan.FromSeconds(1); // reconnect delay
+
+    protected override Task ExecuteJobAsync(CancellationToken cancellationToken) =>
+        RunSessionUntilItDropsAsync(cancellationToken);
+}
+```
+
+Prefer this over filtering the log line in the consumer: the warning stays useful for interval,
+fixed-rate and cron jobs that have outgrown their lease headroom, and suppressing it per job keeps
+that signal intact everywhere else.
+
+Two things to size deliberately when you do this:
+
+- **`LockExpiry` is still your failover latency.** If the pod is killed without releasing the lock, a
+  peer waits out the TTL before taking over.
+- **The lease fence still applies.** If Redis is unreachable for longer than `LockExpiry`, the node
+  demotes itself while your connection is still open. With `CancelOnLostLeadership = true` the
+  iteration is cancelled at that point, which is what you want.
+
 ## Logging levels
 
 | Event | Level |
 |---|---|
 | Service start, leader transitions, release | `Information` |
 | Per-iteration start/end + duration | `Debug` |
-| Iteration close to `LockExpiry` (≥80%) | `Warning` |
+| Iteration close to `LockExpiry` (≥80%) | `Warning` (suppressible — see [Long-lived iterations](#long-lived-iterations)) |
 | Lost leadership | `Warning` |
 | Redis / job exception | `Error` |
 

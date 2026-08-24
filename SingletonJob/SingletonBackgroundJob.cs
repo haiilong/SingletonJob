@@ -262,12 +262,35 @@ public abstract class SingletonBackgroundJob : BackgroundService
     private void EndLeadershipTerm() => Volatile.Read(ref _termCts)?.Cancel();
 
     /// <summary>
-    /// Logs a warning if a single iteration of the job took longer than 80% of <see cref="SingletonJobOptions.LockExpiry"/>.
-    /// When that happens duplicate execution becomes possible because the leader may not renew in time.
+    /// Whether to warn when one iteration runs for most of <see cref="SingletonJobOptions.LockExpiry"/>.
+    /// Override to <c>false</c> for a job whose iteration is deliberately long-lived — a WebSocket
+    /// session or another connection held open for hours — where the duration carries no signal.
     /// </summary>
+    /// <remarks>
+    /// The warning reads a long iteration as a near-miss on the lease, which is the right reading for
+    /// a job that is <em>meant</em> to finish quickly. It is the wrong reading for a job whose whole
+    /// design is one long iteration: renewal happens on the election loop, an independent task, so a
+    /// multi-hour iteration keeps its lease throughout and neither of the warning's remedies applies —
+    /// no <see cref="SingletonJobOptions.LockExpiry"/> exceeds hours, and "shorten the job" would mean
+    /// abandoning the pattern. Leaving it on there trains operators to ignore a warning that is
+    /// genuinely useful elsewhere, so opt out rather than filter the log downstream.
+    /// </remarks>
+    protected virtual bool WarnOnLongExecution => true;
+
+    /// <summary>
+    /// Logs a warning if a single iteration of the job took longer than 80% of
+    /// <see cref="SingletonJobOptions.LockExpiry"/>, unless <see cref="WarnOnLongExecution"/> is off.
+    /// </summary>
+    /// <remarks>
+    /// A long iteration does not by itself open a duplicate-execution window: the election loop renews
+    /// on its own task, independently of how long <c>ExecuteJobAsync</c> runs. What it does signal is a
+    /// job slower than its schedule assumes, where the lease headroom was sized for work that no longer
+    /// fits — and a job that overruns while Redis is also unreachable has that much less margin before
+    /// the lease fence demotes it.
+    /// </remarks>
     protected void WarnIfExecutionTimeTooLong(TimeSpan duration)
     {
-        if (duration > _options.LockExpiry * 0.8)
+        if (WarnOnLongExecution && duration > _options.LockExpiry * 0.8)
         {
             Logger.LogWarning(
                 "Job {JobName} took {DurationMs}ms which is close to LockExpiry {LockExpiryMs}ms. " +

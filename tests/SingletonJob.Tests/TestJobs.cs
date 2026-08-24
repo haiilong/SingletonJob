@@ -140,3 +140,28 @@ internal sealed class CountingCronJob(
             await Task.Delay(workDuration, cancellationToken);
     }
 }
+
+internal sealed class SlowIntervalJob(
+    IConnectionMultiplexer redis,
+    IOptionsFactory<SingletonJobOptions> options,
+    ILogger<SlowIntervalJob> logger,
+    TimeSpan workDuration,
+    bool warnOnLongExecution,
+    string jobName)
+    : SingletonIntervalJob(redis, options, logger)
+{
+    public int RunCount;
+
+    public override string JobName { get; } = jobName;
+
+    protected override bool WarnOnLongExecution => warnOnLongExecution;
+
+    // Long enough that only the first iteration runs inside a test.
+    protected override TimeSpan GetJobInterval() => TimeSpan.FromHours(1);
+
+    protected override async Task ExecuteJobAsync(CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref RunCount);
+        await Task.Delay(workDuration, cancellationToken);
+    }
+}
