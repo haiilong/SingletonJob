@@ -151,17 +151,19 @@ internal sealed class SlowIntervalJob(
     : SingletonIntervalJob(redis, options, logger)
 {
     public int RunCount;
+    public int CompletedCount;
 
     public override string JobName { get; } = jobName;
 
     protected override bool WarnOnLongExecution => warnOnLongExecution;
 
-    // Long enough that only the first iteration runs inside a test.
-    protected override TimeSpan GetJobInterval() => TimeSpan.FromHours(1);
+    // Retry promptly if the first check happens before leadership is acquired.
+    protected override TimeSpan GetJobInterval() => TimeSpan.FromMilliseconds(50);
 
     protected override async Task ExecuteJobAsync(CancellationToken cancellationToken)
     {
         Interlocked.Increment(ref RunCount);
         await Task.Delay(workDuration, cancellationToken);
+        Interlocked.Increment(ref CompletedCount);
     }
 }

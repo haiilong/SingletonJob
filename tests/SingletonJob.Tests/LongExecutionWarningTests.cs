@@ -18,6 +18,25 @@ public class LongExecutionWarningTests(RedisFixture fx)
             MaxBackoffDelay = TimeSpan.FromMilliseconds(200),
         });
 
+    private static async Task RunUntilIterationCompletesAsync(SlowIntervalJob job)
+    {
+        using var cts = new CancellationTokenSource();
+        await job.StartAsync(cts.Token);
+        try
+        {
+            var deadline = Environment.TickCount64 + 5_000;
+            while (Volatile.Read(ref job.CompletedCount) == 0 && Environment.TickCount64 < deadline)
+                await Task.Delay(50);
+        }
+        finally
+        {
+            await cts.CancelAsync();
+            await job.StopAsync(CancellationToken.None);
+        }
+
+        job.CompletedCount.Should().BeGreaterThan(0, "an iteration must complete within five seconds");
+    }
+
     [Fact]
     public async Task Warns_when_an_iteration_runs_for_most_of_the_lock_expiry()
     {
@@ -31,11 +50,7 @@ public class LongExecutionWarningTests(RedisFixture fx)
             warnOnLongExecution: true,
             "slow-warns");
 
-        using var cts = new CancellationTokenSource();
-        await job.StartAsync(cts.Token);
-        await Task.Delay(1_500);
-        await cts.CancelAsync();
-        await job.StopAsync(CancellationToken.None);
+        await RunUntilIterationCompletesAsync(job);
 
         job.RunCount.Should().BeGreaterThan(0, "the iteration must actually have run");
         logger.HasWarningContaining(WarningFragment).Should().BeTrue();
@@ -58,11 +73,7 @@ public class LongExecutionWarningTests(RedisFixture fx)
             warnOnLongExecution: false,
             "slow-quiet");
 
-        using var cts = new CancellationTokenSource();
-        await job.StartAsync(cts.Token);
-        await Task.Delay(1_500);
-        await cts.CancelAsync();
-        await job.StopAsync(CancellationToken.None);
+        await RunUntilIterationCompletesAsync(job);
 
         job.RunCount.Should().BeGreaterThan(0, "the opt-out must suppress the warning, not the work");
         logger.HasWarningContaining(WarningFragment).Should().BeFalse();
