@@ -1,3 +1,5 @@
+# THIS IS JUST A REFERENCE TO https://github.com/haiilong/SingletonJob 
+
 # SingletonJob
 
 Lightweight Redis-backed singleton background jobs for multi-instance .NET deployments. High-frequency, drop-on-overlap, no persistence overhead. A focused alternative to [Hangfire](https://www.hangfire.io/) for the case where you just want **exactly one pod** to run a global periodic job.
