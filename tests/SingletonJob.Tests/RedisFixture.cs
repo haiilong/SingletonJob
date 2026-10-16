@@ -6,9 +6,7 @@ namespace SingletonJob.Tests;
 // ReSharper disable once ClassNeverInstantiated.Global
 public sealed class RedisFixture : IAsyncLifetime
 {
-    private readonly RedisContainer _container = new RedisBuilder()
-        .WithImage("redis:7-alpine")
-        .Build();
+    private readonly RedisContainer _container = new RedisBuilder("redis:7-alpine").Build();
 
     public async Task<IConnectionMultiplexer> ConnectAsync()
     {
